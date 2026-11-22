@@ -287,7 +287,9 @@ std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult& r, 
     double notesLimit = 20000.0;
     if (r.pitch.pitched && r.pitch.lowHz > 0.0)
         notesLimit = r.pitch.lowHz * 0.7;
-    const double contentLimit = r.lowestContentHz > 0.0 ? std::min (notesLimit, r.lowestContentHz * 0.8) : notesLimit;
+    // With a tracked pitch the notes themselves set the limit; the lowest measured content can be noise or rumble.
+    const double contentLimit = (r.lowestContentHz > 0.0 && ! (r.pitch.pitched && r.pitch.lowHz > 0.0))
+                                    ? std::min (notesLimit, r.lowestContentHz * 0.8) : notesLimit;
 
     auto leftAlone = [&] (int index, const juce::String& title, const juce::String& reason)
     {

@@ -128,3 +128,9 @@ applies the corrections through the plug-in and analyses the output again: the r
 by at least 4 dB or disappear.
 
 `EyraEQAnalyze --instrument "Snare drum" file.wav` prints the findings and proposed bands for a file.
+
+## Where the usual moves come from
+
+The usual ranges and amounts per instrument were checked against published mixing references: iZotope's EQ cheat sheet and "How to EQ drums/bass/vocals", Guitar Center's EQ cheat sheet, Native Instruments' kick-drum EQ guide, Produce Like A Pro's "EQ cheat sheet", Music Guy Mixing's per-instrument guides, Nail The Mix's metal guides, Sound On Sound's pad article and the Dummies home-recording EQ table. They agree on the regions and roughly on the amounts (cuts of 2 to 4 dB for mud and boxiness, boosts of 1 to 3 dB for presence and attack) and differ on exact frequencies, which is why each move is a range placed where the track needs it. The curves are rules of thumb, not measurements.
+
+High-pass starting points follow the same sources: vocals about 80 to 100 Hz, guitars 80 to 100 Hz, snare 80 Hz, bass about 40 Hz, strings about 60 Hz, synths about 100 Hz, overheads about 100 Hz and hi-hats about 300 Hz. All of them are held below the lowest note of the track.
