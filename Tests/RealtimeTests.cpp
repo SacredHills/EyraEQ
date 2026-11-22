@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#if defined (_WIN32)
+ #include <malloc.h>
+#endif
 #include <new>
 
 namespace
@@ -31,10 +34,24 @@ void* countedAlignedAlloc (std::size_t size, std::align_val_t al)
     if (countingAllocations)
         allocationCount.fetch_add (1, std::memory_order_relaxed);
     const auto alignment = std::max<std::size_t> ((std::size_t) al, sizeof (void*));
+   #if defined (_WIN32)
+    if (void* p = _aligned_malloc (size == 0 ? 1 : size, alignment))
+        return p;
+   #else
     const auto rounded = (size + alignment - 1) / alignment * alignment;
     if (void* p = std::aligned_alloc (alignment, rounded == 0 ? alignment : rounded))
         return p;
+   #endif
     throw std::bad_alloc();
+}
+
+void alignedFree (void* p) noexcept
+{
+   #if defined (_WIN32)
+    _aligned_free (p);
+   #else
+    std::free (p);
+   #endif
 }
 } // namespace
 
@@ -54,12 +71,12 @@ void operator delete (void* p, std::size_t) noexcept { std::free (p); }
 void operator delete[] (void* p, std::size_t) noexcept { std::free (p); }
 void operator delete (void* p, const std::nothrow_t&) noexcept { std::free (p); }
 void operator delete[] (void* p, const std::nothrow_t&) noexcept { std::free (p); }
-void operator delete (void* p, std::align_val_t) noexcept { std::free (p); }
-void operator delete[] (void* p, std::align_val_t) noexcept { std::free (p); }
-void operator delete (void* p, std::size_t, std::align_val_t) noexcept { std::free (p); }
-void operator delete[] (void* p, std::size_t, std::align_val_t) noexcept { std::free (p); }
-void operator delete (void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free (p); }
-void operator delete[] (void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free (p); }
+void operator delete (void* p, std::align_val_t) noexcept { alignedFree (p); }
+void operator delete[] (void* p, std::align_val_t) noexcept { alignedFree (p); }
+void operator delete (void* p, std::size_t, std::align_val_t) noexcept { alignedFree (p); }
+void operator delete[] (void* p, std::size_t, std::align_val_t) noexcept { alignedFree (p); }
+void operator delete (void* p, std::align_val_t, const std::nothrow_t&) noexcept { alignedFree (p); }
+void operator delete[] (void* p, std::align_val_t, const std::nothrow_t&) noexcept { alignedFree (p); }
 
 namespace
 {
