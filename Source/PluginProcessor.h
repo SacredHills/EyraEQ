@@ -68,6 +68,12 @@ public:
     eyra::state::ABComparison ab;
     eyra::state::PresetManager presets;
 
+    /** Instrument chosen by the user (-1 = automatic). Saved with the session, not automatable. */
+    std::atomic<int> instrumentOverride { -1 };
+
+    /** The user's choice, otherwise the detected instrument (Unknown if neither). */
+    eyra::intelligence::Instrument getEffectiveInstrument() const;
+
     /** Band currently soloed for audition (-1 = none). Not saved, not automatable. */
     std::atomic<int> soloBand { -1 };
 

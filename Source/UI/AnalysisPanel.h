@@ -50,16 +50,20 @@ public:
 private:
     void layoutList();
     juce::String summaryText() const;
+    void refreshInstrumentMenu();
+    void paintInstrument (juce::Graphics&, juce::Rectangle<int> area);
 
     EditorContext& ctx;
     juce::TextButton primaryButton, secondaryButton, fileButton { "Analyze file..." };
+    juce::ComboBox instrumentBox;
     FindingsList list;
     juce::Viewport viewport;
     std::unique_ptr<juce::FileChooser> chooser;
 
     int shownVersion = -1;
     analysis::AnalysisController::State shownState = analysis::AnalysisController::State::Idle;
-    juce::Rectangle<int> statusArea, footerArea;
+    juce::Rectangle<int> statusArea, footerArea, instrumentArea, instrumentLabelArea;
+    juce::String shownAutoText;
     bool isStandalone = false;
 };
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Intelligence/InstrumentTypes.h"
+
 #include <juce_core/juce_core.h>
 
 #include <vector>
@@ -91,6 +93,9 @@ struct AnalysisResult
 
     /** Problems, most severe first. */
     std::vector<Finding> findings;
+
+    /** Instrument recognition (filled in by the AnalysisController when the model is available). */
+    intelligence::InstrumentDetection instrument;
 
     /** Long-term average spectrum (dBFS per FFT bin of width ltasBinHz, 1/6-octave smoothed) at displayFrequencies. */
     std::vector<float> ltasDb;

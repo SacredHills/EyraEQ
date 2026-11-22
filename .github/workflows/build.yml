@@ -56,7 +56,7 @@ jobs:
             libxrandr-dev libxrender-dev libxi-dev libegl-dev libglu1-mesa-dev mesa-common-dev
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DEYRA_REQUIRE_ONNXRUNTIME=ON
 
       - name: Build
         run: cmake --build --preset ${{ matrix.build-preset }} --parallel

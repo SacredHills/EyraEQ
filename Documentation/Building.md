@@ -24,6 +24,32 @@ Outputs are in `build/<preset>/EyraEQ_artefacts/<Config>/`:
 
 `-DEYRA_COPY_PLUGIN_AFTER_BUILD=ON` installs the VST3 into the user plug-in folder after each build.
 
+### Instrument recognition (ONNX Runtime and model)
+
+The configure step downloads the official ONNX Runtime release (1.32.0) for the platform from
+GitHub and the build copies it, together with `Models/`, into the VST3 bundle and next to the
+standalone app:
+
+| | Runtime | Model |
+|---|---|---|
+| VST3 | `EyraEQ.vst3/Contents/<arch>/` (next to the plug-in binary) | `EyraEQ.vst3/Contents/Resources/Models/` |
+| Standalone (Linux / Windows) | next to the executable | `Models/` next to the executable |
+| Standalone (macOS) | `EyraEQ.app/Contents/MacOS/` | `EyraEQ.app/Contents/Resources/Models/` |
+
+Options:
+
+- `-DEYRA_ONNXRUNTIME_LIBRARY=/path/to/libonnxruntime...` bundles a local copy instead of downloading
+  (for example from the official `onnxruntime` Python wheel: `onnxruntime/capi/libonnxruntime.so.1.32.0`).
+- `-DEYRA_BUNDLE_INSTRUMENT_RECOGNITION=OFF` builds without bundling either; the plug-in then reports
+  instrument recognition as unavailable.
+- `-DEYRA_REQUIRE_ONNXRUNTIME=ON` (used in CI) fails the configure step if the runtime cannot be obtained.
+
+The tests find the model through `EYRA_MODEL_DIR` and the runtime through `EYRA_ONNXRUNTIME_LIBRARY`
+(CTest sets both). When both are present, the instrument-recognition tests are required to run.
+
+The model itself is rebuilt from Google's published weights by `.github/workflows/model.yml`; see
+[AI-Models.md](AI-Models.md).
+
 ## Linux
 
 Tested on Ubuntu 24.04 with GCC 13.3. Packages:

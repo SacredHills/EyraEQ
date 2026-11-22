@@ -165,7 +165,21 @@ AnalysisPanel::AnalysisPanel (EditorContext& context) : ctx (context), list (con
     addChildComponent (fileButton);
     fileButton.setVisible (isStandalone);
     addAndMakeVisible (viewport);
+    addAndMakeVisible (instrumentBox);
     viewport.setViewedComponent (&list, false);
+
+    // Manual instrument choice: always available, with or without the model.
+    instrumentBox.addItem ("Auto", 1);
+    instrumentBox.addSeparator();
+    for (int i = 1; i < (int) intelligence::Instrument::NumInstruments; ++i)
+        instrumentBox.addItem (intelligence::instrumentName ((intelligence::Instrument) i), i + 1);
+    instrumentBox.setTooltip ("The instrument on this track. Auto uses the detected instrument; choose one to override it.");
+    instrumentBox.onChange = [this]
+    {
+        const int id = instrumentBox.getSelectedId();
+        ctx.processor.instrumentOverride = id <= 1 ? -1 : id - 1;
+        repaint();
+    };
     viewport.setScrollBarsShown (true, false);
     viewport.setScrollBarThickness (8);
 
@@ -228,17 +242,114 @@ void AnalysisPanel::refresh()
     const bool busy = state == AnalysisController::State::Analysing;
     const bool listening = state == AnalysisController::State::Listening;
 
-    primaryButton.setButtonText (listening ? "Stop & analyze" : (busy ? "Analyzing..." : "Analyze"));
+    primaryButton.setButtonText (listening ? "Stop & analyze" : (busy ? "Analyzing..." : (ctx.analysis != nullptr ? "Reanalyze" : "Analyze")));
     primaryButton.setEnabled (listening ? controller.canStopAndAnalyse() : ! busy);
     secondaryButton.setButtonText (listening ? "Cancel" : "Clear");
     secondaryButton.setEnabled (listening || (! busy && ctx.analysis != nullptr));
     fileButton.setEnabled (! busy && ! listening);
+
+    refreshInstrumentMenu();
 
     if (state != shownState || listening || busy)
     {
         shownState = state;
         repaint();
     }
+}
+
+void AnalysisPanel::refreshInstrumentMenu()
+{
+    using intelligence::InstrumentDetection;
+    juce::String autoText = "Auto";
+    if (ctx.analysis != nullptr && ctx.analysis->instrument.status == InstrumentDetection::Status::Detected)
+        autoText << ": " << intelligence::instrumentName (ctx.analysis->instrument.instrument());
+    else if (ctx.analysis != nullptr && ctx.analysis->instrument.status == InstrumentDetection::Status::Ambiguous)
+        autoText << ": not certain";
+    else if (ctx.analysis != nullptr)
+        autoText << ": not recognised";
+
+    if (autoText != shownAutoText)
+    {
+        shownAutoText = autoText;
+        instrumentBox.changeItemText (1, autoText);
+    }
+
+    const int manual = ctx.processor.instrumentOverride.load();
+    const int id = manual > 0 ? manual + 1 : 1;
+    if (instrumentBox.getSelectedId() != id)
+        instrumentBox.setSelectedId (id, juce::dontSendNotification);
+    else if (id == 1 && instrumentBox.getText() != autoText)
+        instrumentBox.setText (autoText, juce::dontSendNotification);
+}
+
+void AnalysisPanel::paintInstrument (juce::Graphics& g, juce::Rectangle<int> area)
+{
+    using intelligence::InstrumentDetection;
+    using S = InstrumentDetection::Status;
+
+    g.setColour (colours::textDim);
+    g.setFont (uiFont (11.0f, true));
+    g.drawText ("INSTRUMENT", instrumentLabelArea, juce::Justification::centredLeft, false);
+
+    auto line = [&g] (juce::Rectangle<int> r, const juce::String& text, juce::Colour c, float size, int lines = 2)
+    {
+        g.setColour (c);
+        g.setFont (uiFont (size));
+        g.drawFittedText (text, r, juce::Justification::topLeft, lines, 1.0f);
+    };
+
+    const int manual = ctx.processor.instrumentOverride.load();
+    if (ctx.analysis == nullptr)
+    {
+        line (area, manual > 0 ? "Using your choice." : "Analyze to detect the instrument, or choose it above.", colours::textDim, 11.5f);
+        return;
+    }
+
+    const auto& d = ctx.analysis->instrument;
+    auto confidenceName = [] (InstrumentDetection::Confidence c)
+    {
+        return c == InstrumentDetection::Confidence::High ? "high" : (c == InstrumentDetection::Confidence::Medium ? "medium" : "low");
+    };
+
+    juce::String main, detail;
+    juce::Colour colour = colours::text;
+    switch (d.status)
+    {
+        case S::Detected:
+        {
+            const auto& c = d.candidates.front();
+            main = "Detected: " + intelligence::instrumentName (c.instrument) + ", " + confidenceName (d.confidence) + " confidence";
+            detail = "Score " + juce::String (c.score, 2) + (c.note.isNotEmpty() ? " (" + c.note + ")" : juce::String());
+            if (d.candidates.size() > 1)
+                detail << "; next: " << intelligence::instrumentName (d.candidates[1].instrument) << " " << juce::String (d.candidates[1].score, 2);
+            colour = colours::accent;
+            break;
+        }
+        case S::Ambiguous:
+        {
+            juce::StringArray names;
+            for (const auto& c : d.candidates)
+                names.add (intelligence::instrumentName (c.instrument) + " " + juce::String (c.score, 2));
+            main = "Not certain. Possibly: " + names.joinIntoString (", ");
+            detail = "Choose the instrument above if you know it.";
+            colour = colours::warning;
+            break;
+        }
+        case S::Unknown:
+        case S::NeedMoreAudio:
+        case S::Unavailable:
+        case S::NotRun:
+            main = intelligence::describe (d);
+            detail = d.message;
+            colour = d.status == S::Unavailable ? colours::warning : colours::textDim;
+            break;
+    }
+
+    if (manual > 0)
+        detail = "Using your choice: " + intelligence::instrumentName ((intelligence::Instrument) manual) + ". " + detail;
+
+    line (area.removeFromTop (30), main, colour, 12.0f);
+    line (area, detail, colours::textDim, 11.0f);
 }
 
 juce::String AnalysisPanel::summaryText() const
@@ -264,6 +375,8 @@ void AnalysisPanel::paint (juce::Graphics& g)
     g.setColour (colours::textDim);
     g.setFont (uiFont (11.0f, true));
     g.drawText ("AUDIO ANALYSIS", getLocalBounds().reduced (12, 0).removeFromTop (30), juce::Justification::centredLeft, false);
+
+    paintInstrument (g, instrumentArea);
 
     auto& controller = ctx.processor.analysis;
     const auto state = controller.getState();
@@ -329,8 +442,8 @@ void AnalysisPanel::paint (juce::Graphics& g)
 
     g.setColour (colours::outline);
     g.drawHorizontalLine (footerArea.getY(), 10.0f, (float) getWidth() - 10.0f);
-    drawLines (footerArea.reduced (12, 6), "Instrument recognition is not available yet: findings come from the audio alone. "
-                                           "Treat them as suggestions and trust your ears.", colours::textFaint, 11.0f);
+    drawLines (footerArea.reduced (12, 6), "Findings are measured from the audio and are suggestions; trust your ears. "
+                                           "Instrument recognition runs locally (YAMNet).", colours::textFaint, 11.0f);
 }
 
 void AnalysisPanel::resized()
@@ -350,7 +463,13 @@ void AnalysisPanel::resized()
     }
 
     area.removeFromTop (10);
-    statusArea = area.removeFromTop (92);
+    auto instrumentRow = area.removeFromTop (24);
+    instrumentLabelArea = instrumentRow.removeFromLeft (84);
+    instrumentBox.setBounds (instrumentRow);
+    area.removeFromTop (4);
+    instrumentArea = area.removeFromTop (52);
+    area.removeFromTop (6);
+    statusArea = area.removeFromTop (88);
 
     footerArea = getLocalBounds().removeFromBottom (48);
     area.setBottom (footerArea.getY() - 4);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioAnalysis.h"
+#include "Intelligence/InstrumentClassifier.h"
 #include "SpectrumAnalyzer.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -19,6 +20,8 @@ namespace eyra::analysis
       message thread: starts / stops / cancels, polls state and the latest result.
 
     The capture buffer is allocated by the worker when listening starts, never on the audio thread.
+    After the frequency analysis, the worker runs instrument recognition on the same audio (the model is
+    loaded on first use, shared by all instances).
     The standalone app can also analyse an audio file (also on the worker).
 */
 class AnalysisController final : private juce::Thread
@@ -63,6 +66,10 @@ public:
     juce::String getSourceDescription() const;
     juce::String getStatusMessage() const;
 
+    /** Instrument recognition status (runtime / model availability). */
+    juce::String getInstrumentRecognitionStatus() const { return classifier->getStatus(); }
+    bool isInstrumentRecognitionReady() const { return classifier->isReady(); }
+
     /** For tests: blocks until the worker is idle or done, up to timeoutMs. */
     bool waitUntilFinished (int timeoutMs) const;
 
@@ -91,6 +98,8 @@ private:
     double gateEnergy = 0.0;
     int gateCount = 0;
     int silentChunksInARow = 0;
+
+    std::shared_ptr<intelligence::InstrumentClassifier> classifier = intelligence::InstrumentClassifier::getShared();
 
     mutable juce::SpinLock resultLock;
     std::shared_ptr<const AnalysisResult> result;

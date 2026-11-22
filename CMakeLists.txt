@@ -13,6 +13,10 @@ endif()
 
 option(EYRA_BUILD_TESTS "Build the EyraEQ test runner" ON)
 option(EYRA_COPY_PLUGIN_AFTER_BUILD "Copy the VST3 to the user plug-in folder after building" OFF)
+option(EYRA_BUNDLE_INSTRUMENT_RECOGNITION "Bundle ONNX Runtime and the instrument model with the plug-in" ON)
+set(EYRA_ONNXRUNTIME_VERSION "1.32.0" CACHE STRING "ONNX Runtime release to bundle")
+set(EYRA_ONNXRUNTIME_LIBRARY "" CACHE FILEPATH "ONNX Runtime shared library to bundle (downloaded from the official release when empty)")
+option(EYRA_REQUIRE_ONNXRUNTIME "Fail the configure step if ONNX Runtime cannot be bundled (CI)" OFF)
 
 # ---------------------------------------------------------------------------
 # JUCE
@@ -63,6 +67,10 @@ set(EYRA_SOURCES
     Source/UI/BandControlPanel.cpp
     Source/UI/TopBar.cpp
     Source/UI/AnalysisPanel.cpp
+    Source/Intelligence/OnnxRuntime.cpp
+    Source/Intelligence/FeatureExtractor.cpp
+    Source/Intelligence/ModelManager.cpp
+    Source/Intelligence/InstrumentClassifier.cpp
 )
 
 set(EYRA_JUCE_MODULES
@@ -70,7 +78,8 @@ set(EYRA_JUCE_MODULES
     juce::juce_audio_processors
     juce::juce_dsp
     juce::juce_gui_basics
-    juce::juce_gui_extra)
+    juce::juce_gui_extra
+    juce::juce_cryptography)
 
 set(EYRA_COMPILE_DEFINITIONS
     JUCE_WEB_BROWSER=0
@@ -99,7 +108,7 @@ juce_add_plugin(EyraEQ
     COPY_PLUGIN_AFTER_BUILD ${EYRA_COPY_PLUGIN_AFTER_BUILD})
 
 target_sources(EyraEQ PRIVATE ${EYRA_SOURCES})
-target_include_directories(EyraEQ PRIVATE Source)
+target_include_directories(EyraEQ PRIVATE Source ThirdParty/onnxruntime/include)
 target_compile_definitions(EyraEQ PUBLIC ${EYRA_COMPILE_DEFINITIONS})
 target_link_libraries(EyraEQ
     PRIVATE
@@ -109,6 +118,72 @@ target_link_libraries(EyraEQ
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# ---------------------------------------------------------------------------
+# Instrument recognition: ONNX Runtime (loaded at run time, never linked) and the model files.
+# Both are copied into the VST3 bundle and next to the standalone app.
+# ---------------------------------------------------------------------------
+if(EYRA_BUNDLE_INSTRUMENT_RECOGNITION AND NOT EYRA_ONNXRUNTIME_LIBRARY)
+    set(_ort_v ${EYRA_ONNXRUNTIME_VERSION})
+    if(WIN32)
+        set(_ort_name onnxruntime-win-x64-${_ort_v})
+        set(_ort_archive ${_ort_name}.zip)
+        set(_ort_lib lib/onnxruntime.dll)
+    elseif(APPLE)
+        set(_ort_name onnxruntime-osx-universal2-${_ort_v})
+        set(_ort_archive ${_ort_name}.tgz)
+        set(_ort_lib lib/libonnxruntime.${_ort_v}.dylib)
+    else()
+        set(_ort_name onnxruntime-linux-x64-${_ort_v})
+        set(_ort_archive ${_ort_name}.tgz)
+        set(_ort_lib lib/libonnxruntime.so.${_ort_v})
+    endif()
+    set(_ort_dir ${CMAKE_BINARY_DIR}/_deps/onnxruntime)
+    if(NOT EXISTS ${_ort_dir}/${_ort_name}/${_ort_lib})
+        message(STATUS "Downloading ONNX Runtime ${_ort_v} (${_ort_archive})")
+        file(DOWNLOAD https://github.com/microsoft/onnxruntime/releases/download/v${_ort_v}/${_ort_archive}
+             ${_ort_dir}/${_ort_archive} STATUS _ort_status TLS_VERIFY ON)
+        list(GET _ort_status 0 _ort_code)
+        if(_ort_code EQUAL 0)
+            file(ARCHIVE_EXTRACT INPUT ${_ort_dir}/${_ort_archive} DESTINATION ${_ort_dir})
+        else()
+            message(WARNING "Could not download ONNX Runtime (${_ort_status}). The plug-in will build without instrument recognition. Set EYRA_ONNXRUNTIME_LIBRARY to bundle a local copy.")
+        endif()
+    endif()
+    if(EXISTS ${_ort_dir}/${_ort_name}/${_ort_lib})
+        set(EYRA_ONNXRUNTIME_LIBRARY ${_ort_dir}/${_ort_name}/${_ort_lib} CACHE FILEPATH "" FORCE)
+    endif()
+endif()
+
+if(EYRA_REQUIRE_ONNXRUNTIME AND NOT EYRA_ONNXRUNTIME_LIBRARY)
+    message(FATAL_ERROR "ONNX Runtime is required (EYRA_REQUIRE_ONNXRUNTIME) but could not be obtained.")
+endif()
+
+if(EYRA_BUNDLE_INSTRUMENT_RECOGNITION)
+    set(_eyra_bin_vst3 "$<TARGET_FILE_DIR:EyraEQ_VST3>")
+    set(_eyra_bin_app "$<TARGET_FILE_DIR:EyraEQ_Standalone>")
+    if(APPLE)
+        set(_eyra_res_app "${_eyra_bin_app}/../Resources")
+    else()
+        set(_eyra_res_app "${_eyra_bin_app}")
+    endif()
+
+    foreach(_pair "EyraEQ_VST3|${_eyra_bin_vst3}|${_eyra_bin_vst3}/../Resources" "EyraEQ_Standalone|${_eyra_bin_app}|${_eyra_res_app}")
+        string(REPLACE "|" ";" _parts "${_pair}")
+        list(GET _parts 0 _target)
+        list(GET _parts 1 _bin)
+        list(GET _parts 2 _res)
+        add_custom_command(TARGET ${_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_res}/Models"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/Models" "${_res}/Models"
+            VERBATIM)
+        if(EYRA_ONNXRUNTIME_LIBRARY)
+            add_custom_command(TARGET ${_target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${EYRA_ONNXRUNTIME_LIBRARY}" "${_bin}/"
+                VERBATIM)
+        endif()
+    endforeach()
+endif()
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -124,19 +199,27 @@ if(EYRA_BUILD_TESTS)
         Tests/ProcessorTests.cpp
         Tests/AnalyzerTests.cpp
         Tests/RealtimeTests.cpp
-        Tests/AnalysisTests.cpp)
-    target_include_directories(EyraEQTests PRIVATE Source)
+        Tests/AnalysisTests.cpp
+        Tests/IntelligenceTests.cpp)
+    target_include_directories(EyraEQTests PRIVATE Source ThirdParty/onnxruntime/include)
     target_compile_definitions(EyraEQTests PRIVATE
         ${EYRA_COMPILE_DEFINITIONS}
         JucePlugin_Name="EyraEQ"
         JucePlugin_VersionString="${PROJECT_VERSION}"
-        JUCE_MODAL_LOOPS_PERMITTED=1)
+        JUCE_MODAL_LOOPS_PERMITTED=1
+        EYRA_TEST_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Models")
     target_link_libraries(EyraEQTests PRIVATE
         EyraEQ_BinaryData
         ${EYRA_JUCE_MODULES}
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
     add_test(NAME EyraEQTests COMMAND EyraEQTests)
+    set(_eyra_test_env "EYRA_MODEL_DIR=${CMAKE_CURRENT_SOURCE_DIR}/Models")
+    if(EYRA_ONNXRUNTIME_LIBRARY AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Models/yamnet/manifest.json")
+        # Runtime and model are present: the instrument-recognition tests must really run.
+        list(APPEND _eyra_test_env "EYRA_ONNXRUNTIME_LIBRARY=${EYRA_ONNXRUNTIME_LIBRARY}" "EYRA_REQUIRE_INSTRUMENT_RECOGNITION=1")
+    endif()
+    set_tests_properties(EyraEQTests PROPERTIES ENVIRONMENT "${_eyra_test_env}")
 
     # Loads the built VST3 through JUCE's VST3 host, as a DAW would.
     juce_add_console_app(EyraEQHostTest PRODUCT_NAME "EyraEQHostTest")
