@@ -2,6 +2,8 @@
 #include "PluginProcessor.h"
 #include "TestHelpers.h"
 
+#include <numbers>
+
 #include <EyraBinaryData.h>
 
 using namespace eyra;
@@ -268,30 +270,47 @@ public:
             std::unique_ptr<juce::AudioProcessorEditor> editor (p.createEditorAndMakeActive());
             expect (editor != nullptr);
 
-            // Feed pink-ish noise so the analyser has something to draw.
+            // Feed noise with a hum and a resonant tone, and run a real analysis on it, so the
+            // analyser, the analysis panel and the markers all have something to draw.
             juce::Random r (3);
             juce::AudioBuffer<float> buf (2, 512);
             juce::MidiBuffer midi;
             float lp = 0.0f;
+            int64_t n = 0;
             auto* ed = dynamic_cast<EyraEQAudioProcessorEditor*> (editor.get());
-            for (int blk = 0; blk < 200; ++blk)
+            p.analysis.startListening();
+            for (int i = 0; i < 200 && p.analysis.getState() != analysis::AnalysisController::State::Listening; ++i)
+                juce::Thread::sleep (5);
+            for (int blk = 0; blk < 800; ++blk)
             {
-                for (int i = 0; i < 512; ++i)
+                for (int i = 0; i < 512; ++i, ++n)
                 {
                     lp = 0.97f * lp + 0.03f * (r.nextFloat() * 2.0f - 1.0f);
-                    const float v = 2.0f * lp + 0.02f * (r.nextFloat() * 2.0f - 1.0f);
+                    const double t = (double) n / 48000.0;
+                    const float v = 2.0f * lp + 0.02f * (r.nextFloat() * 2.0f - 1.0f)
+                                  + 0.01f * (float) std::sin (2.0 * std::numbers::pi * 60.0 * t)
+                                  + 0.005f * (float) std::sin (2.0 * std::numbers::pi * 120.0 * t)
+                                  + 0.006f * (float) std::sin (2.0 * std::numbers::pi * 3150.0 * t);
                     buf.setSample (0, i, v);
                     buf.setSample (1, i, v);
                 }
                 p.processBlock (buf, midi);
                 if (blk % 4 == 0)
                     ed->getSpectrumDisplay().tick (0.04);
+                if (blk % 40 == 0)
+                    juce::Thread::sleep (2);
             }
+            p.analysis.stopAndAnalyse();
+            expect (p.analysis.waitUntilFinished (test::kBackgroundTimeoutMs));
+            ed->refreshNow();
+            expect (ed->getContext().analysis != nullptr, "analysis result reaches the editor");
+            if (ed->getContext().analysis != nullptr && ! ed->getContext().analysis->findings.empty())
+                ed->getContext().selectedFinding = 0;
 
             ed->getContext().selection.selectOnly (6);
             ed->refreshNow();
 
-            for (auto [w, h] : { std::pair { 860, 520 }, std::pair { 1120, 680 }, std::pair { 1760, 1060 } })
+            for (auto [w, h] : { std::pair { 860, 520 }, std::pair { 1240, 720 }, std::pair { 1760, 1060 } })
             {
                 editor->setSize (w, h);
                 const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);

@@ -27,15 +27,18 @@
 - **Undo, A/B and presets** run on the message thread only and change parameters through
   `setValueNotifyingHost` inside gestures, so hosts record automation and stay in sync.
 
-Later phases (analysis, inference) will run on a dedicated worker thread fed from a capture FIFO
-like the analyser's. The audio thread will never wait for them.
+**Analysis** (Phase 2) runs on a low-priority worker thread (`Analysis/AnalysisController`). The
+pre-EQ signal is sent to both the analyser FIFO and a capture FIFO (`TapFanout`); the capture FIFO
+accepts data only while listening. The worker allocates the capture buffer, drains the FIFO, tracks
+progress and runs `analyseAudio()`. Results reach the UI through a lock-protected `shared_ptr`
+polled by the editor timer. Later phases (instrument inference) will use the same worker.
 
 ## Modules
 
 | Folder | Contents | Depends on |
 |---|---|---|
 | `DSP/` | `FilterDesign` (coefficient design), `EQBand` (smoothing, crossfades, biquad cascade), `EQEngine` (signal path, M/S, solo, gains, bypass) | `juce_audio_basics` only |
-| `Analysis/` | `AnalyzerFifo`, `SpectrumAnalyzer` | `juce_dsp` |
+| `Analysis/` | `AnalyzerFifo`, `SpectrumAnalyzer`; `AudioAnalysis` (orchestrator) with `TransientAnalyzer`, `PitchEstimator`, `TonalBalanceAnalyzer`, `ResonanceDetector`, `SpectralTools`; `AnalysisController` (capture + worker) | `juce_dsp`, `juce_audio_formats` |
 | `Parameters/` | parameter layout, IDs, `ParameterReader` | `juce_audio_processors` |
 | `State/` | `EditHistory`, `ABComparison`, `PresetManager` | `juce_audio_processors` |
 | `UI/` | look and feel, `SpectrumDisplay`, `BandControlPanel`, `TopBar`, `EditorContext` | `juce_gui_basics` |
@@ -81,4 +84,7 @@ inside a `ScopedSuspend`. Master bypass is excluded from undo and A/B.
 - **Series topology with per-band stereo placement**: each band switches between the L/R and M/S
   domains only when needed. The conversion is exact, so mixing placements costs nothing in quality.
 - **No intelligent UI until it works**: the specification forbids fake controls and simulated
-  results, so the analysis panel will appear together with the first working analysis (Phase 2/3).
+  results, so the analysis panel arrived only with working analysis (Phase 2), and there is no
+  instrument display until recognition works (Phase 3).
+- **Analysis is a pure function** (`analyseAudio(samples, rate)`), so it can be tested on synthetic
+  signals with known answers and reused for file analysis.

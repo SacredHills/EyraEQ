@@ -18,6 +18,10 @@ struct EditorContext
     /** Selected band indices; the most recently selected one is the "primary" band. */
     juce::SelectedItemSet<int> selection;
 
+    /** Latest analysis result shown in the panel and on the spectrum, and the highlighted finding. */
+    std::shared_ptr<const analysis::AnalysisResult> analysis;
+    int selectedFinding = -1;
+
     int primaryBand() const
     {
         const int n = selection.getNumSelected();

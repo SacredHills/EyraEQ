@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "UI/AnalysisPanel.h"
 #include "UI/BandControlPanel.h"
 #include "UI/EditorContext.h"
 #include "UI/EyraLookAndFeel.h"
@@ -38,7 +39,7 @@ public:
 
     eyra::ui::SpectrumDisplay& getSpectrumDisplay() noexcept { return display; }
     eyra::ui::EditorContext& getContext() noexcept { return context; }
-    void refreshNow() { timerCallback(); topBar.refresh(); bandPanel.refresh(); }
+    void refreshNow() { timerCallback(); topBar.refresh(); bandPanel.refresh(); analysisPanel.refresh(); }
 
 private:
     void timerCallback() override;
@@ -50,6 +51,7 @@ private:
     eyra::ui::TopBar topBar;
     eyra::ui::SpectrumDisplay display;
     eyra::ui::BandControlPanel bandPanel;
+    eyra::ui::AnalysisPanel analysisPanel;
     SavePresetOverlay saveOverlay;
     juce::TooltipWindow tooltips { this, 700 };
 

@@ -1,5 +1,6 @@
 #include "SpectrumDisplay.h"
 
+#include "AnalysisPanel.h"
 #include "EyraLookAndFeel.h"
 
 #include <cmath>
@@ -50,6 +51,7 @@ void SpectrumDisplay::applyUIState (const EyraUIState& s)
     postAnalyzer.setSettings (s.analyzer);
     showPre = s.showPreSpectrum;
     showPost = s.showPostSpectrum;
+    showAnalysis = s.showAnalysisOverlay;
     rangeDb = s.displayRangeDb;
     repaint();
 }
@@ -205,6 +207,8 @@ void SpectrumDisplay::paint (juce::Graphics& g)
         drawSpectrum (g, preAnalyzer.getLevels(), colours::spectrumPre, true);
     if (showPost)
         drawSpectrum (g, postAnalyzer.getLevels(), colours::spectrumPost, false);
+
+    drawAnalysisOverlay (g);
 
     const size_t n = curveFrequencies.size();
     auto curvePath = [&] (const std::vector<float>& db)
@@ -413,6 +417,97 @@ void SpectrumDisplay::drawSpectrum (juce::Graphics& g, const std::vector<float>&
         g.fillPath (fill);
         g.setColour (colour.withAlpha (0.8f));
         g.strokePath (path, juce::PathStrokeType (1.0f));
+    }
+}
+
+void SpectrumDisplay::drawAnalysisOverlay (juce::Graphics& g)
+{
+    if (! showAnalysis || ctx.analysis == nullptr || ctx.analysis->status != analysis::AnalysisResult::Status::Ok)
+        return;
+
+    const auto& r = *ctx.analysis;
+    juce::Graphics::ScopedSaveState s (g);
+    g.reduceClipRegion (plot.toNearestInt());
+
+    // Long-term spectrum of the analysed audio, calibrated like the live analyser: same bin width
+    // (noise level depends on it) and the same display slope.
+    const auto& settings = postAnalyzer.getSettings();
+    const double liveBinHz = r.sampleRate / (double) (1 << settings.fftOrder);
+    const float binOffset = (float) (10.0 * std::log10 (liveBinHz / std::max (1.0e-6, r.ltasBinHz)));
+    juce::Path ltas;
+    bool started = false;
+    for (size_t i = 0; i < r.ltasDb.size(); ++i)
+    {
+        if (r.ltasDb[i] <= -139.0f)
+            continue;
+        const double hz = r.displayFrequencies[i];
+        const float level = r.ltasDb[i] + binOffset + settings.slopeDbPerOctave * (float) std::log2 (hz / 1000.0);
+        const float x = xForFrequency (hz);
+        const float y = yForAnalyzerDb (level);
+        if (! started)
+            ltas.startNewSubPath (x, y), started = true;
+        else
+            ltas.lineTo (x, y);
+    }
+    if (started)
+    {
+        juce::Path dashed;
+        const float dashes[] = { 4.0f, 3.0f };
+        juce::PathStrokeType (1.2f).createDashedStroke (dashed, ltas, dashes, 2);
+        g.setColour (juce::Colour (0xffc9a24d).withAlpha (0.55f));
+        g.fillPath (dashed);
+    }
+
+    // Findings
+    for (int i = 0; i < (int) r.findings.size(); ++i)
+    {
+        const auto& f = r.findings[(size_t) i];
+        if (f.type == analysis::FindingType::DCOffset)
+            continue;
+
+        const bool selected = ctx.selectedFinding == i;
+        const auto colour = colourForSeverity (f.severityLabel());
+        const float top = plot.getY();
+
+        if (f.isNarrow())
+        {
+            const float x = xForFrequency (f.frequency);
+            juce::Path line, dashed;
+            line.startNewSubPath (x, top + 12.0f);
+            line.lineTo (x, plot.getBottom());
+            const float dashes[] = { 3.0f, 3.0f };
+            juce::PathStrokeType (selected ? 1.6f : 1.0f).createDashedStroke (dashed, line, dashes, 2);
+            g.setColour (colour.withAlpha (selected ? 0.9f : 0.45f));
+            g.fillPath (dashed);
+
+            juce::Path diamond;
+            diamond.addPolygon ({ x, top + 6.0f }, 4, selected ? 5.5f : 4.0f, juce::MathConstants<float>::pi * 0.25f);
+            g.setColour (colour.withAlpha (selected ? 1.0f : 0.8f));
+            g.fillPath (diamond);
+        }
+        else
+        {
+            const float x0 = xForFrequency (std::max (analysis::AnalysisSettings().displayMinHz, f.lowFrequency));
+            const float x1 = xForFrequency (f.highFrequency);
+            g.setColour (colour.withAlpha (selected ? 0.13f : 0.05f));
+            g.fillRect (juce::Rectangle<float> (x0, top, x1 - x0, plot.getHeight()));
+            g.setColour (colour.withAlpha (selected ? 0.9f : 0.6f));
+            g.fillRect (juce::Rectangle<float> (x0, top, x1 - x0, 3.0f));
+        }
+
+        if (selected)
+        {
+            const auto text = f.title + (f.isNarrow() ? juce::String() : "  " + analysis::describeFrequency (f.frequency));
+            g.setFont (uiFont (12.0f, true));
+            const float w = (float) juce::GlyphArrangement::getStringWidthInt (uiFont (12.0f, true), text) + 16.0f;
+            auto box = juce::Rectangle<float> (w, 20.0f).withCentre ({ xForFrequency (f.frequency), top + 24.0f });
+            box = box.withX (juce::jlimit (plot.getX() + 2.0f, plot.getRight() - w - 2.0f, box.getX()));
+            g.setColour (colours::panelRaised.withAlpha (0.95f));
+            g.fillRoundedRectangle (box, 4.0f);
+            g.setColour (colour);
+            g.drawRoundedRectangle (box, 4.0f, 1.0f);
+            g.drawText (text, box.toNearestInt(), juce::Justification::centred, false);
+        }
     }
 }
 

@@ -87,8 +87,19 @@ void IconButton::paintButton (juce::Graphics& g, bool over, bool down)
 TopBar::TopBar (EditorContext& context) : ctx (context)
 {
     for (auto* c : std::initializer_list<juce::Component*> { &prevButton, &nextButton, &presetButton, &undoButton, &redoButton,
-                                                            &aButton, &bButton, &copyABButton, &editButton, &bypassButton, &settingsButton })
+                                                            &aButton, &bButton, &copyABButton, &editButton, &bypassButton, &settingsButton,
+                                                            &analysisButton })
         addAndMakeVisible (c);
+
+    analysisButton.setTooltip ("Show or hide the audio analysis panel");
+    analysisButton.onClick = [this]
+    {
+        auto s = ctx.processor.getUIState();
+        s.analysisPanelOpen = ! s.analysisPanelOpen;
+        ctx.processor.setUIState (s);
+        if (onAnalysisPanelToggled)
+            onAnalysisPanelToggled (s.analysisPanelOpen);
+    };
 
     presetButton.setTooltip ("Presets");
     aButton.setTooltip ("Recall setting A");
@@ -127,6 +138,10 @@ void TopBar::refresh()
     const int slot = proc.ab.getActiveSlot();
     aButton.setToggleState (slot == 0, juce::dontSendNotification);
     bButton.setToggleState (slot == 1, juce::dontSendNotification);
+    analysisButton.setToggleState (proc.getUIState().analysisPanelOpen, juce::dontSendNotification);
+    const bool listening = proc.analysis.getState() == analysis::AnalysisController::State::Listening;
+    analysisButton.setButtonText (listening ? "Listening" : "Analysis");
+
     const juce::String copyText = slot == 0 ? "A > B" : "B > A";
     if (copyABButton.getButtonText() != copyText)
         copyABButton.setButtonText (copyText);
@@ -170,6 +185,8 @@ void TopBar::resized()
     right.removeFromRight (6);
     editButton.setBounds (right.removeFromRight (h));
 
+    area.removeFromRight (12);
+    analysisButton.setBounds (area.removeFromRight (82));
     area.removeFromRight (12);
     copyABButton.setBounds (area.removeFromRight (56));
     area.removeFromRight (4);
@@ -328,6 +345,7 @@ void TopBar::showSettingsMenu()
     menu.addSubMenu ("Averaging", averaging);
     menu.addSubMenu ("Peak decay", decay);
     menu.addSubMenu ("Display slope", slope);
+    menu.addItem (4, "Show analysis results on the spectrum", true, s.showAnalysisOverlay);
     menu.addSectionHeader ("Display");
     menu.addSubMenu ("EQ scale", range);
     menu.addSubMenu ("Window size", size);
@@ -350,6 +368,7 @@ void TopBar::showSettingsMenu()
                             if (r == 1) n.showPreSpectrum = ! n.showPreSpectrum;
                             else if (r == 2) n.showPostSpectrum = ! n.showPostSpectrum;
                             else if (r == 3) n.analyzer.freeze = ! n.analyzer.freeze;
+                            else if (r == 4) n.showAnalysisOverlay = ! n.showAnalysisOverlay;
                             else if (r == 10) n.analyzer.mode = Mode::RMS;
                             else if (r == 11) n.analyzer.mode = Mode::Peak;
                             else if (r >= 31 && r <= 35) n.analyzer.fftOrder = r - 20;

@@ -47,6 +47,13 @@ set(EYRA_SOURCES
     Source/DSP/EQBand.cpp
     Source/DSP/EQEngine.cpp
     Source/Analysis/SpectrumAnalyzer.cpp
+    Source/Analysis/AudioAnalysis.cpp
+    Source/Analysis/SpectralTools.cpp
+    Source/Analysis/TransientAnalyzer.cpp
+    Source/Analysis/PitchEstimator.cpp
+    Source/Analysis/TonalBalanceAnalyzer.cpp
+    Source/Analysis/ResonanceDetector.cpp
+    Source/Analysis/AnalysisController.cpp
     Source/Parameters/Parameters.cpp
     Source/State/PresetManager.cpp
     Source/State/EditHistory.cpp
@@ -55,6 +62,7 @@ set(EYRA_SOURCES
     Source/UI/SpectrumDisplay.cpp
     Source/UI/BandControlPanel.cpp
     Source/UI/TopBar.cpp
+    Source/UI/AnalysisPanel.cpp
 )
 
 set(EYRA_JUCE_MODULES
@@ -115,7 +123,8 @@ if(EYRA_BUILD_TESTS)
         Tests/EQEngineTests.cpp
         Tests/ProcessorTests.cpp
         Tests/AnalyzerTests.cpp
-        Tests/RealtimeTests.cpp)
+        Tests/RealtimeTests.cpp
+        Tests/AnalysisTests.cpp)
     target_include_directories(EyraEQTests PRIVATE Source)
     target_compile_definitions(EyraEQTests PRIVATE
         ${EYRA_COMPILE_DEFINITIONS}
