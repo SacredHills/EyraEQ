@@ -13,7 +13,7 @@ whether or not the model is available.
 | Licence | Apache License 2.0 (weights and code); class names CC BY 4.0 (AudioSet ontology) |
 | Source | Official weights `storage.googleapis.com/audioset/yamnet.h5`, official code `tensorflow/models` at commit `8f3b2e4` (pinned; SHA-256 of every upstream file recorded in `Models/yamnet/manifest.json`) |
 | Format | ONNX (opset 17), network only: input log-mel patches `[N, 96, 64]`, outputs 521 class scores and 1024-d embeddings; 14.9 MB |
-| Runtime | ONNX Runtime 1.32.0 (MIT), loaded at run time from inside the plug-in bundle |
+| Runtime | ONNX Runtime 1.32.0 (MIT), Microsoft's official build, loaded at run time from inside the plug-in bundle. Available for Windows x64, Linux x64 and macOS arm64 (14+); not for Intel Macs |
 
 YAMNet was chosen because its licence permits commercial use, it is small and fast on a CPU, and
 AudioSet has classes for most of the instruments in the specification. Models with non-commercial

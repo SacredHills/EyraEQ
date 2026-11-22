@@ -26,9 +26,11 @@ Outputs are in `build/<preset>/EyraEQ_artefacts/<Config>/`:
 
 ### Instrument recognition (ONNX Runtime and model)
 
-The configure step downloads the official ONNX Runtime release (1.32.0) for the platform from
-GitHub and the build copies it, together with `Models/`, into the VST3 bundle and next to the
-standalone app:
+The configure step downloads Microsoft's official ONNX Runtime 1.32.0 build for the platform (from its
+PyPI wheel, which contains the C API library; the download is checked against PyPI's SHA-256), and the
+build copies it, together with `Models/`, into the VST3 bundle and next to the standalone app. Microsoft
+ships 1.32 for Windows x64, Linux x64 and **macOS arm64 (macOS 14+) only**; on Intel Macs and older
+macOS versions instrument recognition reports itself as unavailable while everything else works.
 
 | | Runtime | Model |
 |---|---|---|
