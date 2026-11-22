@@ -1,6 +1,74 @@
 # Testing report
 
-Phase 2 results are in the next section; Phase 1 results follow it.
+Newest phase first.
+
+## Phase 3: instrument recognition (2026-11-21, branch `phase-3-instrument-recognition`)
+
+### Update: drum recognition fix (2026-11-22)
+
+Drums were not recognised (the model hears lone kicks as "Knock", snares as "Sound effect"; sparse
+hits produced an empty long-term spectrum). Recognition is now two-stage: the model picks the family,
+measurements pick the drum (see [AI-Models](AI-Models.md#drums)).
+
+| Check | Result |
+|---|---|
+| `EyraEQTests`, Release and ASan/UBSan/LSan Debug, with the model | **464 checks passed, 0 failed**, no sanitizer errors |
+| 30 local drum loops through `EyraEQAnalyze` (in-sample, not redistributable) | 14 detected, all correct; 15 "possibly" incl. the right drum; 1 "Drums"; 0 wrong |
+| Synthetic kick / floor tom / rack tom / snare / hi-hat through the real analysis (CI) | all identified |
+| NSynth pitched notes, retuned (valid → test) | 92% → **84%** correct when detected (44 test notes), 4% detected |
+
+The figures below are from before this update.
+
+| Suite | Result |
+|---|---|
+| `EyraEQTests` (Release, with ONNX Runtime 1.32.0 and the model) | **425 checks passed, 0 failed** |
+| `EyraEQTests` without a runtime available | 417 passed; model tests report "skipped: ONNX Runtime library not found" (CI requires them) |
+| `EyraEQHostTest` (Release) | **33 passed** (adds: bundle contains the runtime, model and taxonomy) |
+| Both suites under ASan + UBSan + LSan (Debug), with the model | **all passed**; no sanitizer errors, no leaks, no JUCE assertions |
+
+CI (GitHub Actions run 44987917750): Linux x64, macOS (Apple Silicon runner) and Windows x64 all
+**pass**. On each one the official ONNX Runtime 1.32.0 was downloaded and bundled, the unit tests ran
+*with* instrument recognition required (the TensorFlow-reference and self-test checks cannot skip), the
+host test checked the bundle, and **pluginval strictness 10 reported SUCCESS**.
+
+### Model conversion and verification (CI, `.github/workflows/model.yml`)
+
+- YAMNet converted from Google's official weights (Apache 2.0); upstream checksums recorded.
+- Python copy of the front end + ONNX vs the TensorFlow reference: log-mel error 2.3e-5, score error 7.7e-7.
+- **Plug-in C++ front end + ONNX Runtime vs the TensorFlow reference** (unit test): log-mel within
+  8e-6, scores within 1e-6. The same check runs as a self-test whenever the model loads.
+
+### Recognition accuracy (NSynth, thresholds tuned on the valid split, measured on the test split)
+
+| 1,177 single notes | Result |
+|---|---|
+| Correct when "detected" | **92%** |
+| Detected with confidence | 7% |
+| "Not certain" with candidates (contain the right instrument) | 61% (49%) |
+| Not recognised | 32% |
+
+Per-family details: [Validation/nsynth-validation.md](Validation/nsynth-validation.md).
+
+### Behaviour tests
+
+- Decision rules: detected (high / medium), not certain, not recognised, more audio needed; test
+  values derived from the taxonomy's thresholds.
+- Refinements: male / female / undecided vocal, rack / floor tom, clean / distorted guitar, synth bass.
+- Model manager: newer user model preferred; tampered model rejected by checksum, with fallback to the
+  bundled one; missing files reported.
+- Missing model or runtime: "unavailable" with the reason; analysis and EQ unaffected.
+- Through the plug-in: recognition runs after a capture; pink noise is not "detected" as an instrument;
+  silence is never detected; results consistent at 16 and 48 kHz.
+- The manual instrument choice is saved and restored with the session.
+
+### Not yet tested (Phase 3)
+
+- Drum recognition and the pitch-based refinements on real recordings (no suitable openly licensed data in CI yet).
+- Real multitrack stems in general; NSynth single notes are a harder, narrower test.
+- Loading inside real DAWs on macOS / Windows (CI covers the unit tests with the bundled runtime,
+  the bundle contents, and pluginval).
+- Intel Macs and macOS versions before 14: Microsoft ships no ONNX Runtime 1.32 build for them, so
+  recognition reports "unavailable" there by design; not run in CI.
 
 ## Phase 2: audio analysis (2026-11-21, branch `phase-2-audio-analysis`)
 

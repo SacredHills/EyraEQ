@@ -8,6 +8,7 @@ namespace
     const juce::Identifier uiType { "UIState" };
     const juce::Identifier versionProp { "version" };
     const juce::Identifier presetProp { "preset" };
+    const juce::Identifier instrumentProp { "instrumentOverride" };
 
     juce::ValueTree uiStateToTree (const EyraUIState& s)
     {
@@ -120,6 +121,16 @@ juce::AudioProcessorEditor* EyraEQAudioProcessor::createEditor()
     return new EyraEQAudioProcessorEditor (*this);
 }
 
+eyra::intelligence::Instrument EyraEQAudioProcessor::getEffectiveInstrument() const
+{
+    const int manual = instrumentOverride.load();
+    if (manual > 0)
+        return (eyra::intelligence::Instrument) manual;
+    if (const auto r = analysis.getResult())
+        return r->instrument.instrument();
+    return eyra::intelligence::Instrument::Unknown;
+}
+
 juce::AudioProcessorParameter* EyraEQAudioProcessor::getBypassParameter() const
 {
     return apvts.getParameter (eyra::params::id::masterBypass);
@@ -143,6 +154,7 @@ void EyraEQAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     juce::ValueTree root (stateType);
     root.setProperty (versionProp, 1, nullptr);
     root.setProperty (presetProp, presets.getCurrentPresetName(), nullptr);
+    root.setProperty (instrumentProp, instrumentOverride.load(), nullptr);
     root.appendChild (apvts.copyState(), nullptr);
     root.appendChild (uiStateToTree (getUIState()), nullptr);
     root.appendChild (ab.toValueTree(), nullptr);
@@ -168,6 +180,8 @@ void EyraEQAudioProcessor::setStateInformation (const void* data, int sizeInByte
     setUIState (uiStateFromTree (root.getChildWithName (uiType)));
     ab.fromValueTree (root.getChildWithName ("ABComparison"));
     presets.setCurrentPresetName (root.getProperty (presetProp, "Default").toString());
+    const int instrument = root.getProperty (instrumentProp, -1);
+    instrumentOverride = (instrument > 0 && instrument < (int) eyra::intelligence::Instrument::NumInstruments) ? instrument : -1;
 }
 
 //==============================================================================

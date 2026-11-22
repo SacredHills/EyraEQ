@@ -233,6 +233,24 @@ void AnalysisController::drainIntoCapture()
 void AnalysisController::runAnalysis (const float* data, int numSamples, double rate, const juce::String& source)
 {
     auto r = std::make_shared<AnalysisResult> (analyseAudio (data, numSamples, rate));
+
+    using Status = intelligence::InstrumentDetection::Status;
+    if (r->status == AnalysisResult::Status::Silent)
+    {
+        r->instrument.status = Status::NeedMoreAudio;
+        r->instrument.message = "No signal.";
+    }
+    else
+    {
+        setStatus ("Recognising the instrument...");
+        if (classifier->ensureInitialised())
+            r->instrument = classifier->classify (data, numSamples, rate, *r);
+        else
+        {
+            r->instrument.status = Status::Unavailable;
+            r->instrument.message = classifier->getStatus();
+        }
+    }
     {
         const juce::SpinLock::ScopedLockType lock (resultLock);
         result = std::move (r);

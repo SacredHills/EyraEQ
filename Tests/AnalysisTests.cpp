@@ -384,6 +384,16 @@ public:
                 logMessage (summarise (*r));
                 expectWithinAbsoluteError (r->activeSeconds, eyra::analysis::AnalysisController::kTargetActiveSeconds, 1.0);
                 expect (find (*r, FindingType::Resonance, 2400.0, 0.03) != nullptr, "resonance found through the plug-in");
+
+                // Instrument recognition runs on the same capture.
+                using IS = eyra::intelligence::InstrumentDetection::Status;
+                expect (r->instrument.status != IS::NotRun, "instrument recognition ran");
+                logMessage ("instrument: " + eyra::intelligence::describe (r->instrument) + " / " + r->instrument.message);
+                if (juce::SystemStats::getEnvironmentVariable ("EYRA_REQUIRE_INSTRUMENT_RECOGNITION", {}) == "1")
+                {
+                    expect (r->instrument.status != IS::Unavailable, r->instrument.message);
+                    expect (r->instrument.status != IS::Detected, "pink noise is not an instrument");
+                }
             }
             expect (p.analysis.getResultVersion() > 0);
         }

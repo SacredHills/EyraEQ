@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Intelligence/InstrumentTypes.h"
+
 #include <juce_core/juce_core.h>
 
 #include <vector>
@@ -87,10 +89,20 @@ struct AnalysisResult
     double onsetsPerSecond = 0.0;
     double spectralTiltDbPerOct = 0.0; // 100 Hz - 10 kHz
     double spectralCentroidHz = 0.0;
+
+    /** Share of the energy (20 Hz - 20 kHz) in four regions: < 150 Hz, 150 Hz - 1 kHz, 1 - 5 kHz, > 5 kHz. */
+    double lowShare = 0.0, lowMidShare = 0.0, midShare = 0.0, highShare = 0.0;
+    /** Spectral flatness of the long-term spectrum, 150 Hz - 8 kHz (0 = tonal, 1 = white noise). */
+    double spectralFlatness = 0.0;
+    /** Median time for a hit to fall 20 dB below its peak (percussive material), seconds; 0 if not measured. */
+    double medianDecaySeconds = 0.0;
     double lowestContentHz = 0.0, highestContentHz = 0.0;
 
     /** Problems, most severe first. */
     std::vector<Finding> findings;
+
+    /** Instrument recognition (filled in by the AnalysisController when the model is available). */
+    intelligence::InstrumentDetection instrument;
 
     /** Long-term average spectrum (dBFS per FFT bin of width ltasBinHz, 1/6-octave smoothed) at displayFrequencies. */
     std::vector<float> ltasDb;

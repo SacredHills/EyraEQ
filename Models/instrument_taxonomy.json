@@ -1,0 +1,71 @@
+{
+  "version": 2,
+  "description": "Maps classifier labels (AudioSet class names, as used by YAMNet) to EyraEQ instrument families and categories. Read by the plug-in and by Scripts/models/*.py, so both use identical logic. Generic labels (Percussion, Guitar, Keyboard) count towards a family only; categories use specific labels. Within drums the piece is decided by measurements (drumRules); drum category scores only serve as a hint, and generic Drum counts towards toms so that hand-percussion classes do not override tonal drums. percussiveClasses (generic impact sounds) count only when the analysis measured regular hits.",
+  "decision": {
+    "minActiveSeconds": 3.0,
+    "presentScore": 0.08,
+    "familyConfidentScore": 0.2,
+    "familyDominanceRatio": 2.0,
+    "memberConfidentScore": 0.6,
+    "memberDominanceRatio": 1.5,
+    "highConfidenceScore": 0.7,
+    "highDominanceRatio": 3.0,
+    "candidateRatio": 0.5,
+    "maxCandidates": 3,
+    "calibration": "Family and member thresholds tuned on the NSynth valid split for >= 90% precision of 'Detected' (Scripts/models/tune_thresholds.py): valid 92%, test 84% correct when detected (44 of 1,177 test notes detected). Drum rules: see drumRules and Documentation/AI-Models.md."
+  },
+  "families": [
+    { "id": "drums", "name": "Drums and percussion", "classes": { "Drum": 1.0, "Drum kit": 1.0, "Drum machine": 1.0, "Percussion": 0.9, "Bass drum": 1.0, "Snare drum": 1.0, "Rimshot": 1.0, "Drum roll": 1.0, "Timpani": 0.9, "Tabla": 0.9, "Cymbal": 1.0, "Hi-hat": 1.0, "Wood block": 1.0, "Tambourine": 1.0, "Maraca": 1.0, "Rattle (instrument)": 0.9, "Cowbell": 1.0, "Mallet percussion": 1.0, "Marimba, xylophone": 1.0, "Glockenspiel": 1.0, "Vibraphone": 1.0, "Steelpan": 1.0, "Tubular bells": 0.9, "Gong": 0.9 },
+      "percussiveClasses": { "Knock": 0.7, "Thump, thud": 0.7, "Whack, thwack": 0.7, "Tap": 0.6 } },
+    { "id": "bass",       "name": "Bass",              "classes": { "Bass guitar": 1.0, "Double bass": 1.0 } },
+    { "id": "guitar",     "name": "Guitar",            "classes": { "Guitar": 1.0, "Electric guitar": 1.0, "Acoustic guitar": 1.0, "Steel guitar, slide guitar": 1.0, "Tapping (guitar technique)": 1.0, "Plucked string instrument": 0.7 } },
+    { "id": "vocal",      "name": "Vocal",             "classes": { "Singing": 1.0, "Vocal music": 0.7, "Choir": 0.8, "Child singing": 0.8, "Synthetic singing": 0.8, "Chant": 0.7, "Yodeling": 0.7, "Rapping": 0.8, "Humming": 0.7, "Speech": 0.6 } },
+    { "id": "keys",       "name": "Keys",              "classes": { "Piano": 1.0, "Electric piano": 1.0, "Keyboard (musical)": 0.8, "Harpsichord": 1.0, "Organ": 1.0, "Electronic organ": 1.0, "Hammond organ": 1.0, "Synthesizer": 1.0, "Sampler": 0.6 } },
+    { "id": "orchestral", "name": "Strings and brass", "classes": { "Bowed string instrument": 1.0, "String section": 1.0, "Violin, fiddle": 1.0, "Cello": 1.0, "Pizzicato": 0.8, "Orchestra": 0.5, "Brass instrument": 1.0, "Trumpet": 1.0, "Trombone": 1.0, "French horn": 1.0 } },
+    { "id": "other",      "name": "Other acoustic",    "classes": { "Harp": 1.0, "Mandolin": 1.0, "Banjo": 1.0, "Ukulele": 1.0, "Sitar": 1.0, "Flute": 1.0, "Saxophone": 1.0, "Clarinet": 1.0, "Accordion": 1.0, "Harmonica": 1.0, "Bagpipes": 1.0, "Didgeridoo": 1.0 } }
+  ],
+  "categories": [
+    { "id": "kick",            "family": "drums",      "name": "Kick drum",           "classes": { "Bass drum": 1.0 } },
+    { "id": "snare",           "family": "drums",      "name": "Snare drum",          "classes": { "Snare drum": 1.0, "Rimshot": 0.9, "Drum roll": 0.6 } },
+    { "id": "toms",            "family": "drums",      "name": "Toms",                "classes": { "Timpani": 0.6, "Drum": 1.0 } },
+    { "id": "cymbals",         "family": "drums",      "name": "Cymbals",             "classes": { "Cymbal": 1.0, "Hi-hat": 1.0, "Gong": 0.6 } },
+    { "id": "overheads",       "family": "drums",      "name": "Overheads / drum kit","classes": { "Drum kit": 1.0 } },
+    { "id": "percussion",      "family": "drums",      "name": "Percussion",          "classes": { "Tambourine": 1.0, "Maraca": 1.0, "Rattle (instrument)": 0.9, "Wood block": 1.0, "Cowbell": 1.0, "Tabla": 0.9, "Mallet percussion": 0.8, "Marimba, xylophone": 0.8, "Glockenspiel": 0.8, "Vibraphone": 0.8, "Steelpan": 0.8, "Tubular bells": 0.7 } },
+    { "id": "electric_bass",   "family": "bass",       "name": "Electric bass",       "classes": { "Bass guitar": 1.0 } },
+    { "id": "acoustic_bass",   "family": "bass",       "name": "Acoustic bass",       "classes": { "Double bass": 1.0 } },
+    { "id": "electric_guitar", "family": "guitar",     "name": "Electric guitar",     "classes": { "Electric guitar": 1.0, "Tapping (guitar technique)": 0.6 } },
+    { "id": "acoustic_guitar", "family": "guitar",     "name": "Acoustic guitar",     "classes": { "Acoustic guitar": 1.0, "Steel guitar, slide guitar": 0.6 } },
+    { "id": "vocal",           "family": "vocal",      "name": "Vocal",               "classes": { "Singing": 1.0, "Vocal music": 0.7, "Choir": 0.8, "Child singing": 0.8, "Synthetic singing": 0.8, "Chant": 0.7, "Yodeling": 0.7, "Rapping": 0.8, "Humming": 0.7, "Speech": 0.6 } },
+    { "id": "piano",           "family": "keys",       "name": "Piano",               "classes": { "Piano": 1.0, "Electric piano": 0.9, "Harpsichord": 0.6 } },
+    { "id": "organ",           "family": "keys",       "name": "Organ",               "classes": { "Organ": 1.0, "Electronic organ": 1.0, "Hammond organ": 1.0 } },
+    { "id": "synth",           "family": "keys",       "name": "Synthesizer",         "classes": { "Synthesizer": 1.0, "Sampler": 0.6 } },
+    { "id": "strings",         "family": "orchestral", "name": "Strings",             "classes": { "Bowed string instrument": 1.0, "String section": 1.0, "Violin, fiddle": 1.0, "Cello": 1.0, "Pizzicato": 0.8, "Orchestra": 0.5 } },
+    { "id": "brass",           "family": "orchestral", "name": "Brass",               "classes": { "Brass instrument": 1.0, "Trumpet": 1.0, "Trombone": 1.0, "French horn": 1.0 } },
+    { "id": "acoustic_other",  "family": "other",      "name": "Acoustic instrument", "classes": { "Harp": 1.0, "Mandolin": 1.0, "Banjo": 1.0, "Ukulele": 1.0, "Sitar": 1.0, "Flute": 1.0, "Saxophone": 1.0, "Clarinet": 1.0, "Accordion": 1.0, "Harmonica": 1.0, "Bagpipes": 1.0, "Didgeridoo": 1.0 } }
+  ],
+  "drumRules": {
+    "description": "Drum piece from the sound itself (the model cannot reliably tell kick, snare and toms apart). Values within the margin of a threshold give 'not certain' with both candidates.",
+    "cymbalMinHighShare": 0.4,
+    "cymbalMinCentroidHz": 2500.0,
+    "cymbalMaxLowShare": 0.05,
+    "kitMinLowShare": 0.2,
+    "kitMinHighShare": 0.2,
+    "lowMinShare": 0.5,
+    "kickMaxDecaySeconds": 0.22,
+    "decayMargin": 0.25,
+    "snareMinFlatness": 0.1,
+    "flatnessMargin": 0.35,
+    "modelPercussionScore": 0.3
+  },
+  "refinements": {
+    "distortionClass": "Distortion",
+    "distortedGuitarScore": 0.20,
+    "cleanGuitarScore": 0.06,
+    "maleVocalMaxMedianHz": 165.0,
+    "maleVocalMaxHighHz": 260.0,
+    "femaleVocalMinMedianHz": 230.0,
+    "femaleVocalMinLowHz": 160.0,
+    "rackFloorTomSplitHz": 110.0,
+    "synthBassMaxMedianHz": 140.0
+  }
+}
