@@ -1,0 +1,40 @@
+name: Build and validate instrument model
+
+# Converts Google's YAMNet (Apache-2.0) to ONNX, verifies it against the TensorFlow reference,
+# and validates instrument recognition on the NSynth test set. The resulting Models/yamnet folder
+# is uploaded as an artifact and committed to the repository by a maintainer.
+
+on:
+  push:
+    paths:
+      - "Scripts/models/**"
+      - "Models/instrument_taxonomy.json"
+      - ".github/workflows/model.yml"
+  workflow_dispatch:
+
+jobs:
+  model:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Scripts/models/requirements.txt
+
+      - name: Convert YAMNet to ONNX and verify against TensorFlow
+        run: python Scripts/models/build_yamnet_onnx.py build-model/yamnet
+
+      - name: Validate on NSynth
+        run: python Scripts/models/validate_nsynth.py build-model/yamnet Models/instrument_taxonomy.json build-model/nsynth-validation.md 60
+
+      - name: Upload model
+        uses: actions/upload-artifact@v4
+        with:
+          name: yamnet-model
+          path: build-model
