@@ -23,7 +23,7 @@ struct Settings
     double amount = 1.0;          // 0..1.5, scales every gain
     int maxCorrections = 6;       // 1..12
     bool preserveCharacter = true;
-    bool autoHighPass = false;    // also suggest a high-pass when no rumble was measured
+    bool autoHighPass = true;     // also suggest a high-pass suited to the instrument (none for General)
     bool applyAutomatically = false; // apply as soon as an analysis finishes (otherwise: suggestions)
 
     juce::ValueTree toValueTree() const;
@@ -45,10 +45,28 @@ struct Suggestion
     Kind kind = Kind::Cut;
     std::optional<dsp::BandParams> band; // empty for LeftAlone
     int findingIndex = -1;               // index into AnalysisResult::findings, -1 if none
+    juce::String heading;                // for suggestions without a finding, e.g. "Boxiness (cardboard)"
     juce::String title;                  // e.g. "Cut 3.5 dB at 824 Hz"
     juce::String reason;                 // why, in plain language
     double priority = 0.0;               // higher first
 };
+
+/**
+    The measured long-term spectrum compared with the instrument's typical tonal balance, on a
+    1/12-octave grid. Levels are per 1/3 octave (pink noise is flat), and the target is shifted to the
+    measured level (median difference), so only the shape matters.
+*/
+struct TargetComparison
+{
+    bool valid = false;
+    std::vector<double> frequencies, measuredDb, targetDb, deviationDb; // deviation smoothed over 1/3 octave
+    double toleranceDb = 0.0;
+};
+
+TargetComparison compareToTarget (const analysis::AnalysisResult&, Instrument, Strength);
+
+/** Allowed deviation from the target before a correction is made (dB). */
+double targetTolerance (Strength);
 
 /** Turns analysis results into EQ suggestions for the chosen instrument. Pure function, any thread. */
 std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult&, const Settings&);

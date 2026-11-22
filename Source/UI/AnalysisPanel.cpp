@@ -73,6 +73,8 @@ juce::String SuggestionList::headingFor (int index) const
     const auto& sg = suggestions[(size_t) index];
     if (result != nullptr && sg.findingIndex >= 0 && sg.findingIndex < (int) result->findings.size())
         return result->findings[(size_t) sg.findingIndex].title;
+    if (sg.heading.isNotEmpty())
+        return sg.heading;
     switch (sg.kind)
     {
         case correction::Suggestion::Kind::HighPass:    return "High-pass";
@@ -87,7 +89,8 @@ juce::String SuggestionList::detailFor (int index) const
 {
     const auto& sg = suggestions[(size_t) index];
     juce::String d;
-    if (result != nullptr && sg.findingIndex >= 0 && sg.findingIndex < (int) result->findings.size())
+    if (sg.kind != correction::Suggestion::Kind::LeftAlone && result != nullptr && sg.findingIndex >= 0
+        && sg.findingIndex < (int) result->findings.size())
         d = result->findings[(size_t) sg.findingIndex].detail + "\n";
     return d + sg.reason;
 }

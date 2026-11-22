@@ -10,7 +10,7 @@ contains neither).
 
 | Suite | Result |
 |---|---|
-| `EyraEQTests` (Release) | **434 checks passed, 0 failed**, including 11 corrective-EQ test groups |
+| `EyraEQTests` (Release) | **all checks passed** (about 560), including 12 corrective-EQ test groups |
 | `EyraEQHostTest` (Release) | **33 passed** |
 
 What the correction tests cover is listed in [Correction.md](Correction.md#testing). Not yet tested:

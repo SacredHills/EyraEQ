@@ -69,10 +69,26 @@ struct Enhancement
 struct InstrumentProfile
 {
     Instrument instrument = Instrument::General;
+
+    /**
+        Typical tonal balance of a well-recorded, mix-ready instance of the instrument: relative level
+        (dB) at control frequencies, interpolated on a log-frequency axis and compared with the measured
+        long-term spectrum (both 1/6-octave smoothed). Empty for sources too varied to have one
+        (synthesizer, other acoustic, General): those use the generic analysis only.
+        These are engineering rules of thumb, not measurements: see Documentation/Correction.md.
+    */
+    std::vector<std::pair<double, double>> target;
+    double fitLowHz = 0.0, fitHighHz = 0.0;   // range compared with the target
+    /** Names for parts of the spectrum ("boxiness", "sibilance"...), used to label corrections. */
+    std::vector<CharacterRegion> zones;
+
     /** Highest high-pass that is normally safe (Hz); 0 = do not suggest one unless rumble is measured. */
     double highPassHz = 0.0;
     /** Use the measured pitch to protect the fundamental region (pitched instruments, toms). */
     bool protectFundamental = false;
+    /** Drums and cymbals: their heads and shells ring at their own (inharmonic) frequencies, which
+        are part of the tone, so steady narrow peaks are not cut; only excessive ringing is. */
+    bool drum = false;
     std::vector<CharacterRegion> character;
     std::vector<Enhancement> polish;
 };

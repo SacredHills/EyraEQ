@@ -458,6 +458,45 @@ void SpectrumDisplay::drawAnalysisOverlay (juce::Graphics& g)
         g.fillPath (dashed);
     }
 
+    // Typical balance of the chosen instrument, aligned with the measurement, with its tolerance band.
+    const auto settingsNow = ctx.processor.getCorrectionSettings();
+    const auto cmp = correction::compareToTarget (r, settingsNow.instrument, settingsNow.strength);
+    if (cmp.valid)
+    {
+        juce::Path line, band;
+        juce::Array<juce::Point<float>> upper, lower;
+        for (size_t i = 0; i < cmp.frequencies.size(); ++i)
+        {
+            const double hz = cmp.frequencies[i];
+            // back from per-1/3-octave to the per-bin scale the overlay uses
+            const float base = (float) (cmp.targetDb[i] - 10.0 * std::log10 (hz / 1000.0)) + binOffset
+                             + settings.slopeDbPerOctave * (float) std::log2 (hz / 1000.0);
+            const float x = xForFrequency (hz);
+            if (i == 0)
+                line.startNewSubPath (x, yForAnalyzerDb (base));
+            else
+                line.lineTo (x, yForAnalyzerDb (base));
+            upper.add ({ x, yForAnalyzerDb (base + (float) cmp.toleranceDb) });
+            lower.add ({ x, yForAnalyzerDb (base - (float) cmp.toleranceDb) });
+        }
+        for (int i = 0; i < upper.size(); ++i)
+            i == 0 ? band.startNewSubPath (upper[i]) : band.lineTo (upper[i]);
+        for (int i = lower.size(); --i >= 0;)
+            band.lineTo (lower[i]);
+        band.closeSubPath();
+        g.setColour (colours::accent.withAlpha (0.06f));
+        g.fillPath (band);
+        g.setColour (colours::accent.withAlpha (0.55f));
+        g.strokePath (line, juce::PathStrokeType (1.4f));
+        if (! cmp.frequencies.empty())
+        {
+            g.setFont (uiFont (10.5f));
+            g.drawText ("typical " + correction::instrumentName (settingsNow.instrument).toLowerCase(),
+                        juce::Rectangle<float> (xForFrequency (cmp.frequencies.front()) + 4.0f, plot.getY() + 14.0f, 200.0f, 14.0f),
+                        juce::Justification::centredLeft, false);
+        }
+    }
+
     // Findings
     for (int i = 0; i < (int) r.findings.size(); ++i)
     {

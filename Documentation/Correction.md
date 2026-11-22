@@ -42,19 +42,49 @@ The most important moves come first; **Max bands** limits how many are used.
 
 ### Instrument awareness
 
-Each instrument has a profile (`Source/Correction/Instrument.cpp`):
+The generic analysis compares each part of the spectrum with the rest of the same track. That suits a
+mix bus, whose balance should be fairly smooth, but not a single instrument: a kick is *supposed* to
+have a huge 60 Hz bump and little at 400 Hz. So when an instrument is chosen, its broad tonal balance
+is compared with the **typical balance of that instrument** instead:
+
+1. The measured long-term spectrum (1/6-octave smoothed, expressed per 1/3 octave so pink noise is
+   flat) is compared with the instrument's typical curve over its useful range, on a 1/12-octave grid.
+2. The curve is shifted to the measured level (median difference), so only the shape matters.
+3. Where the track is more than the tolerance above the curve (Gentle 6 dB, Moderate 4.5, Aggressive
+   3.5) over at least 1/3 octave, a broad cut is proposed and named after the region ("boxiness
+   (cardboard)" on a kick, "sibilance" on a vocal). In Polished mode, regions more than tolerance + 1 dB
+   *below* the curve over at least half an octave get a small boost.
+4. The generic broad findings are then shown as "normal for this instrument" or "handled by the
+   balance correction", instead of being cut on their own.
+
+The typical curve and its tolerance band are drawn on the spectrum ("typical floor tom" etc.).
+
+**These curves are engineering rules of thumb** (typical spectra of well-recorded, mix-ready sources
+as commonly described in mixing practice), written by hand in `Instrument.cpp`. They are not measured
+from a dataset, the tolerances are deliberately wide, and they can be refined from real stems. Synthesizer,
+"other acoustic instrument" and General have no curve and use the generic analysis.
+
+Narrow peaks on a single instrument are treated more carefully than on a mix:
+
+- **Drums and cymbals**: heads and shells ring at their own inharmonic frequencies, which are part of
+  the drum's tone, so steady narrow peaks are left alone; only *ringing* (a band that decays much more
+  slowly than the rest of the hit) is cut.
+- Narrow peaks in parts of the spectrum that are quiet for the instrument (more than 18 dB below its
+  loudest region on the typical curve) are left alone.
+- At most three narrow cuts, 25% smaller and no narrower than Q 10.
+
+Each instrument profile also has:
 
 - **Character regions**: where the instrument naturally has a lot of energy (kick body 40–110 Hz and
   beater 2–5 kHz, snare body 150–260 Hz, a tom's body, a vocal's presence region, ...). Pitched
   instruments also protect the measured range of the played notes. With **Preserve character** on, a
   broad excess there is left alone below 4 dB and otherwise cut by half, and a narrow peak on the
   note's fundamental is left alone. This is why a floor tom's 100 Hz body is not "mud".
-- **Safe high-pass**: with **Auto high-pass**, a 12 dB/oct high-pass at the instrument's usual limit
+- **Safe high-pass**: with **Auto high-pass** (on by default), a 12 dB/oct high-pass at the instrument's usual limit
   (kick 30 Hz, snare 80 Hz, male vocal 80 Hz, cymbals 250 Hz, ...), always kept below 0.7 × the lowest
   measured note and 0.8 × the lowest measured content. A rumble finding gets a high-pass regardless.
-- **Polished enhancements**: subtle boosts typical for the instrument (snare crack at 5 kHz, vocal
-  presence and air, ...), 1–1.5 dB at Moderate. Each is offered only when no problem was measured
-  within about half an octave and the recording has content there.
+- **Polished enhancements** for instruments without a typical curve: fixed subtle boosts, offered
+  only when no problem was measured nearby and the recording has content there.
 
 **Transparent** mode never boosts; **Polished** adds the enhancements.
 
@@ -62,7 +92,10 @@ Each instrument has a profile (`Source/Correction/Instrument.cpp`):
 
 `Tests/CorrectionTests.cpp` checks each mapping above, strength and amount scaling, character
 protection (the same low-end build-up is cut on a general source, left alone on a kick when mild, and
-halved when strong), high-pass placement relative to the notes, that Transparent never boosts and
+halved when strong), the typical-balance comparison (a typical kick gets no corrections; the same kick
+with 8 dB too much at 400 Hz gets one boxiness cut there; a mild hump that the generic analysis calls
+mud is normal on a vocal; harsh 3.5 kHz is cut and a dull top gets air only in Polished), drums keeping
+their shell tones while excessive ringing is still cut, high-pass placement relative to the notes, that Transparent never boosts and
 Polished avoids problem regions, the band limit and overlaps, and the processor side: free slots,
 replace, reset, undo, session save. An end-to-end test analyses noise with a 12 dB resonance,
 applies the corrections through the plug-in and analyses the output again: the resonance must drop

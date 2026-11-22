@@ -145,6 +145,38 @@ int usedBands (EyraEQAudioProcessor& p)
     return n;
 }
 
+
+/** A result whose measured spectrum is the instrument's typical balance, plus optional bumps (dB over an octave). */
+AnalysisResult resultShapedLike (Instrument instrument, std::vector<std::pair<double, double>> bumps = {})
+{
+    auto r = okResult();
+    r.sampleRate = 48000.0;
+    const auto& P = profileFor (instrument).target;
+    auto targetAt = [&] (double f)
+    {
+        if (f <= P.front().first) return P.front().second;
+        if (f >= P.back().first) return P.back().second;
+        for (size_t i = 1; i < P.size(); ++i)
+            if (f <= P[i].first)
+                return P[i - 1].second + std::log (f / P[i - 1].first) / std::log (P[i].first / P[i - 1].first) * (P[i].second - P[i - 1].second);
+        return P.back().second;
+    };
+    for (int i = 0; i < 512; ++i)
+    {
+        const double f = 10.0 * std::pow (3000.0, i / 511.0);
+        double db = targetAt (f) - 10.0 * std::log10 (f / 1000.0) - 40.0;
+        for (auto [centre, gain] : bumps)
+        {
+            const double oct = std::abs (std::log2 (f / centre));
+            if (oct < 0.5)
+                db += gain * std::cos (oct * juce::MathConstants<double>::pi); // smooth one-octave bump
+        }
+        r.displayFrequencies.push_back (f);
+        r.ltasDb.push_back ((float) db);
+    }
+    return r;
+}
+
 class CorrectionTests final : public juce::UnitTest
 {
 public:
@@ -271,6 +303,8 @@ public:
             expect (all.front().kind == K::HighPass, "rumble first");
 
             Settings s;
+            s.autoHighPass = false;
+            s.instrument = Instrument::MaleVocal;
             r.findings.clear();
             expect (withBands (generateCorrections (r, s)).empty(), "no rumble, no auto high-pass: nothing");
             s.autoHighPass = true;
@@ -328,6 +362,74 @@ public:
             expect (forFinding (all, 8)->kind == K::LeftAlone);
             expect (forFinding (all, 8)->reason.contains ("covered"), forFinding (all, 8)->reason);
             expect (forFinding (all, 7)->title == "Not used");
+        }
+
+        beginTest ("Instrument balance: compared with a typical instance of the instrument");
+        {
+            Settings s;
+            s.instrument = Instrument::KickDrum;
+            s.autoHighPass = false;
+
+            // A kick that looks like a typical kick: its huge low end is not a problem.
+            auto typical = resultShapedLike (Instrument::KickDrum);
+            const auto cmp = compareToTarget (typical, Instrument::KickDrum, Strength::Moderate);
+            expect (cmp.valid);
+            for (auto d : cmp.deviationDb)
+                expect (std::abs (d) < 0.5, "deviation of a typical kick: " + juce::String (d, 2));
+            expect (withBands (generateCorrections (typical, s)).empty(), "typical kick: nothing to correct");
+
+            // The same kick with 8 dB too much around 400 Hz: a boxiness cut there.
+            auto boxy = resultShapedLike (Instrument::KickDrum, { { 400.0, 8.0 } });
+            auto cuts = withBands (generateCorrections (boxy, s));
+            expectEquals ((int) cuts.size(), 1);
+            if (! cuts.empty())
+            {
+                expect (cuts[0].band->gainDb < -1.5 && cuts[0].band->type == dsp::FilterType::Bell, cuts[0].title);
+                expect (std::abs (std::log2 (cuts[0].band->frequency / 400.0)) < 0.25, cuts[0].title);
+                expect (cuts[0].heading.containsIgnoreCase ("boxiness"), cuts[0].heading);
+                expect (cuts[0].reason.contains ("typical kick drum balance"), cuts[0].reason);
+            }
+
+            // On a vocal, the same 400 Hz region is the voice's body: a mild hump is left alone ...
+            s.instrument = Instrument::MaleVocal;
+            auto vocal = resultShapedLike (Instrument::MaleVocal);
+            vocal.findings = { broad (200.0, 300.0, 450.0, 3.0) }; // the generic analysis calls it mud
+            auto all = generateCorrections (vocal, s);
+            expect (withBands (all).empty());
+            expect (forFinding (all, 0)->kind == K::LeftAlone);
+            expect (forFinding (all, 0)->reason.contains ("Normal for this instrument (male vocal)"), forFinding (all, 0)->reason);
+
+            // Drums: steady narrow peaks are the drum's own tones; only ringing is cut.
+            s.instrument = Instrument::SnareDrum;
+            s.mode = Mode::Transparent;
+            auto snare = resultShapedLike (Instrument::SnareDrum);
+            snare.findings = { narrow (FindingType::Resonance, 600.0, 10.0, 16.0), narrow (FindingType::Ringing, 900.0, 10.0, 8.0) };
+            all = generateCorrections (snare, s);
+            expect (forFinding (all, 0)->kind == K::LeftAlone && forFinding (all, 0)->reason.contains ("Drum heads"));
+            expect (forFinding (all, 1)->band.has_value(), "excessive ringing is still cut");
+            s.instrument = Instrument::MaleVocal;
+            s.mode = Mode::Polished;
+
+            // ... but harsh 3 kHz and dull top are acted on (Polished adds a little back where it is lacking).
+            s.mode = Mode::Polished;
+            auto harsh = resultShapedLike (Instrument::MaleVocal, { { 3500.0, 8.0 }, { 11000.0, -9.0 } });
+            int cutsFound = 0, boosts = 0;
+            for (const auto& sg : withBands (generateCorrections (harsh, s)))
+            {
+                cutsFound += sg.kind == K::Cut ? 1 : 0;
+                boosts += sg.kind == K::Enhancement ? 1 : 0;
+                if (sg.kind == K::Enhancement)
+                    expect (sg.band->gainDb > 0.0 && sg.band->gainDb <= 3.0, sg.title);
+            }
+            expectEquals (cutsFound, 1, "harshness cut");
+            expectEquals (boosts, 1, "air added back");
+            s.mode = Mode::Transparent;
+            for (const auto& sg : withBands (generateCorrections (harsh, s)))
+                expect (sg.band->gainDb <= 0.0, "Transparent never boosts");
+
+            // Instruments without a typical balance (synthesizer) use the generic analysis.
+            expect (! compareToTarget (typical, Instrument::Synthesizer, Strength::Moderate).valid);
+            expect (! compareToTarget (typical, Instrument::General, Strength::Moderate).valid);
         }
 
         beginTest ("No analysis, no corrections; settings round-trip");
