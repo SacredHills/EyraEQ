@@ -20,6 +20,14 @@ Date: 2026-11-21 · Commit: Phase 1 branch (`phase-1-functional-eq`)
 | Both suites under ASan + UBSan + LSan (Debug) | **All passed; no sanitizer errors, no leaks, no JUCE assertions** |
 | Standalone app launched under Xvfb | Runs and renders (no audio device in the test machine) |
 
+### Continuous integration (GitHub Actions, run 44966178176)
+
+| Platform | Runner | Build | `ctest` (unit + VST3 host test) | pluginval, strictness 10 |
+|---|---|---|---|---|
+| Linux x64 | ubuntu-24.04 | pass | pass | **SUCCESS** |
+| macOS Universal (arm64 + x86_64) | macos-latest | pass | pass | **SUCCESS** |
+| Windows x64 | windows-2022 (VS 2022) | pass | pass | **SUCCESS** |
+
 ### Unit tests (`EyraEQTests`)
 
 | Area | What is verified | Measured |
@@ -58,10 +66,8 @@ processing, editor open and resize, host bypass passing audio unchanged, and 10 
 
 Stated plainly so nothing is assumed:
 
-- **macOS and Windows builds have not been compiled or run.** The CI workflow for them is in place
-  but has not run yet, because this branch has not been pushed until now.
-- **pluginval has not been run locally**: building it from source was not permitted in the
-  development sandbox. It is configured in CI at strictness level 10 on all three platforms.
+- macOS and Windows have been built and tested only on CI runners, not on physical machines.
+  On macOS only the runner's native architecture (arm64) was executed; the x86_64 slice is built but not run.
 - **No DAW testing yet** (Reaper, Ableton Live, Bitwig, Cubase, Logic via a future AU, FL Studio).
   Planned for Phase 6.
 - **No audio-device testing of the Standalone app** (the test machine has no sound card).

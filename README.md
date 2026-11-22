@@ -12,7 +12,7 @@ The full product specification lives in [DEVELOPMENT_PROMPT.md](DEVELOPMENT_PROM
 
 | Phase | Scope | Status |
 |------:|-------|--------|
-| 1 | Functional EQ: JUCE/CMake project, VST3 + Standalone, EQ engine, spectrum analyser, UI, presets, A/B, undo, bypass | **Done.** Built and tested on Linux (see [testing report](Documentation/TestingReport.md)). CI builds macOS and Windows. |
+| 1 | Functional EQ: JUCE/CMake project, VST3 + Standalone, EQ engine, spectrum analyser, UI, presets, A/B, undo, bypass | **Done.** Builds, tests and pluginval (strictness 10) pass on Linux, macOS and Windows (see [testing report](Documentation/TestingReport.md)). |
 | 2 | Audio analysis: problem-frequency and resonance detection, analysis buffer | Not started |
 | 3 | Instrument recognition (ONNX Runtime, local model) | Not started. No model is included and none is claimed to work. |
 | 4 | Intelligent corrective EQ generating real bands | Not started |
