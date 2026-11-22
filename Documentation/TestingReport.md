@@ -11,6 +11,11 @@ Newest phase first.
 | `EyraEQHostTest` (Release) | **33 passed** (adds: bundle contains the runtime, model and taxonomy) |
 | Both suites under ASan + UBSan + LSan (Debug), with the model | **all passed**; no sanitizer errors, no leaks, no JUCE assertions |
 
+CI (GitHub Actions run 44987917750): Linux x64, macOS (Apple Silicon runner) and Windows x64 all
+**pass**. On each one the official ONNX Runtime 1.32.0 was downloaded and bundled, the unit tests ran
+*with* instrument recognition required (the TensorFlow-reference and self-test checks cannot skip), the
+host test checked the bundle, and **pluginval strictness 10 reported SUCCESS**.
+
 ### Model conversion and verification (CI, `.github/workflows/model.yml`)
 
 - YAMNet converted from Google's official weights (Apache 2.0); upstream checksums recorded.
@@ -45,8 +50,10 @@ Per-family details: [Validation/nsynth-validation.md](Validation/nsynth-validati
 
 - Drum recognition and the pitch-based refinements on real recordings (no suitable openly licensed data in CI yet).
 - Real multitrack stems in general; NSynth single notes are a harder, narrower test.
-- macOS / Windows run-time loading of the bundled runtime: covered by CI (unit tests with the
-  downloaded official runtime and the host test's bundle checks), not by loading inside a DAW.
+- Loading inside real DAWs on macOS / Windows (CI covers the unit tests with the bundled runtime,
+  the bundle contents, and pluginval).
+- Intel Macs and macOS versions before 14: Microsoft ships no ONNX Runtime 1.32 build for them, so
+  recognition reports "unavailable" there by design; not run in CI.
 
 ## Phase 2: audio analysis (2026-11-21, branch `phase-2-audio-analysis`)
 
