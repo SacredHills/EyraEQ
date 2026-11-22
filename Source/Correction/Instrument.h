@@ -35,6 +35,7 @@ enum class Instrument : int
     Strings,
     Brass,
     AcousticInstrument,
+    ScreamingVocal,     // screamed / harsh rock and metal vocals
     NumInstruments
 };
 
@@ -42,6 +43,9 @@ juce::String instrumentName (Instrument);
 
 /** Menu section an instrument belongs to ("Drums", "Bass", ...); empty for General. */
 juce::String instrumentGroup (Instrument);
+
+/** Menu sections in display order. */
+juce::StringArray instrumentGroups();
 
 /** A frequency region that belongs to the instrument's sound. */
 struct CharacterRegion

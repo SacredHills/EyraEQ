@@ -527,6 +527,8 @@ std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult& r, 
                         leftAlone (-1, "Left alone", "Around " + hz (peakHz) + " is this track's main low peak (its note or body), "
                                                      "which makes up the instrument's sound. Turn off Preserve character to allow a cut here.");
                         out.back().heading = sg.heading;
+                        out.back().optionalBand = makeBand (dsp::FilterType::Bell, peakHz, -std::max (1.0, cut * amount),
+                                                            juce::jlimit (0.5, 3.0, qForBandwidth (width)));
                         continue;
                     }
                     if (s.preserveCharacter)
@@ -711,6 +713,7 @@ std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult& r, 
         {
             sg.reason = "Only the " + juce::String (maxNarrow) + " strongest narrow cuts are used on a single instrument, to keep its tone: "
                       + sg.title.toLowerCase() + ".";
+            sg.optionalBand = sg.band;
             sg.band.reset();
             sg.kind = K::LeftAlone;
             sg.title = "Not used";
@@ -723,6 +726,7 @@ std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult& r, 
                     && std::max (out[j].band->q, sg.band->q) < 2.0 * std::min (out[j].band->q, sg.band->q))
                 {
                     sg.reason = "Already covered by the stronger cut at " + hz (out[j].band->frequency) + ".";
+                    sg.optionalBand = sg.band;
                     sg.band.reset();
                     sg.kind = K::LeftAlone;
                     sg.title = "Left alone";
@@ -733,9 +737,37 @@ std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult& r, 
         if (++kept > s.maxCorrections)
         {
             sg.reason = "Beyond the number of corrections (" + juce::String (s.maxCorrections) + "): " + sg.title.toLowerCase() + ".";
+            sg.optionalBand = sg.band;
             sg.band.reset();
             sg.kind = K::LeftAlone;
             sg.title = "Not used";
+        }
+    }
+
+    // Everything left alone can still be chosen: give each finding the band it would get if corrected.
+    for (auto& sg : out)
+    {
+        if (sg.band || sg.optionalBand || sg.findingIndex < 0 || sg.findingIndex >= (int) r.findings.size())
+            continue;
+        const auto& f = r.findings[(size_t) sg.findingIndex];
+        const double strength = std::max (0.5, amount);
+        if (f.type == FT::Rumble || f.type == FT::DCOffset)
+        {
+            const double freq = f.type == FT::Rumble ? std::max (20.0, f.highFrequency * 0.8) : 20.0;
+            sg.optionalBand = makeBand (dsp::FilterType::HighPass, freq, 0.0, 0.7071, slopeIndexFor (12));
+        }
+        else if (f.isNarrow())
+        {
+            const double cut = juce::jlimit (1.0, tuning.capNarrow, std::max (0.0, f.excessDb) * tuning.scale * strength);
+            const double q = f.type == FT::Hum ? std::max (10.0, f.q) : juce::jlimit (2.0, 10.0, f.q > 0.0 ? f.q : 6.0);
+            sg.optionalBand = makeBand (dsp::FilterType::Bell, f.frequency, -cut, q);
+        }
+        else
+        {
+            const double lo = std::max (20.0, f.lowFrequency), hi = std::max (lo * 1.05, f.highFrequency);
+            const double cut = juce::jlimit (1.0, tuning.capBroad, std::max (0.0, f.excessDb) * tuning.scale * strength);
+            sg.optionalBand = makeBand (dsp::FilterType::Bell, f.frequency > 0.0 ? f.frequency : std::sqrt (lo * hi), -cut,
+                                        juce::jlimit (0.5, 3.0, qForBandwidth (octavesBetween (lo, hi))));
         }
     }
 

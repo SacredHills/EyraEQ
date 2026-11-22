@@ -81,6 +81,7 @@ it, for example:
 | Toms | a little more of the drum's own note; cut boxiness 280–700 Hz; add stick attack 3–5.5 kHz |
 | Bass | cut mud 200–400 Hz; add weight 60–100 Hz and note definition 0.7–1.2 kHz |
 | Vocals | cut mud 200–450 Hz; add presence 2.5–5 kHz and air (shelf at 10–11 kHz) |
+| Screaming vocal | cut boxiness 300–600 Hz; add aggression 1–2 kHz; tame ice-pick harshness 2.5–5 kHz and fizz 5.5–9 kHz; a little air. Its typical curve has the weight in the upper mids, so normal grit is not treated as harshness |
 | Guitars | cut mud / boom; add presence or sparkle (distorted: tame fizz 3–5 kHz) |
 
 (Full list in `Instrument.cpp`.) Each move is **placed** where the track needs it most within its range

@@ -52,7 +52,9 @@ void SuggestionList::setSuggestions (std::shared_ptr<const AnalysisResult> r, st
 {
     result = std::move (r);
     suggestions = std::move (s);
-    checked.assign (suggestions.size(), true);
+    checked.clear();
+    for (const auto& sg : suggestions)
+        checked.push_back (sg.band.has_value()); // left-alone moves can be chosen, but start unticked
     hovered = -1;
     repaint();
 }
@@ -61,12 +63,35 @@ std::vector<dsp::BandParams> SuggestionList::checkedBands() const
 {
     std::vector<dsp::BandParams> bands;
     for (size_t i = 0; i < suggestions.size(); ++i)
-        if (checked[i] && suggestions[i].band)
-            bands.push_back (*suggestions[i].band);
+        if (checked[i])
+        {
+            if (suggestions[i].band)
+                bands.push_back (*suggestions[i].band);
+            else if (suggestions[i].optionalBand)
+                bands.push_back (*suggestions[i].optionalBand);
+        }
     return bands;
 }
 
 int SuggestionList::numChecked() const { return (int) checkedBands().size(); }
+
+bool SuggestionList::allChecked() const
+{
+    for (size_t i = 0; i < suggestions.size(); ++i)
+        if ((suggestions[i].band || suggestions[i].optionalBand) && ! checked[i])
+            return false;
+    return true;
+}
+
+void SuggestionList::setAllChecked (bool shouldBeChecked)
+{
+    for (size_t i = 0; i < suggestions.size(); ++i)
+        if (suggestions[i].band || suggestions[i].optionalBand)
+            checked[i] = shouldBeChecked;
+    repaint();
+    if (onCheckedChanged)
+        onCheckedChanged();
+}
 
 juce::String SuggestionList::headingFor (int index) const
 {
@@ -160,7 +185,8 @@ void SuggestionList::paint (juce::Graphics& g)
 
         // The proposed move, with a tick box when there is one.
         auto actionRow = content.removeFromTop (18);
-        if (sg.band)
+        const auto* bandToShow = sg.band ? &*sg.band : (sg.optionalBand ? &*sg.optionalBand : nullptr);
+        if (bandToShow != nullptr)
         {
             auto box = actionRow.removeFromLeft (14).withSizeKeepingCentre (12, 12).toFloat();
             g.setColour (checked[(size_t) i] ? colours::accent : colours::outline);
@@ -177,7 +203,13 @@ void SuggestionList::paint (juce::Graphics& g)
         }
         g.setFont (uiFont (12.0f, true));
         g.setColour (sg.kind == K::LeftAlone ? colours::textFaint : (sg.kind == K::Enhancement ? colours::accent.brighter (0.3f) : colours::accent));
-        g.drawFittedText (sg.band ? sg.title : "No EQ: " + sg.title.toLowerCase(), actionRow, juce::Justification::centredLeft, 1);
+        const bool optionalTicked = ! sg.band && sg.optionalBand && checked[(size_t) i];
+        if (! sg.band && sg.optionalBand)
+            g.setColour (optionalTicked ? colours::accent : colours::textDim);
+        g.drawFittedText (sg.band ? sg.title
+                                  : (sg.optionalBand ? "Optional: " + correction::describeBand (*sg.optionalBand)
+                                                     : "No EQ: " + sg.title.toLowerCase()),
+                          actionRow, juce::Justification::centredLeft, 1);
 
         content.removeFromTop (1);
         detailLayout (detailFor (i), (float) content.getWidth()).draw (g, content.toFloat());
@@ -215,7 +247,7 @@ void SuggestionList::mouseDown (const juce::MouseEvent& e)
     int top = 0;
     for (int i = 0; i < r; ++i)
         top += rowHeight (i, getWidth());
-    if (sg.band && e.y >= top + 21 && e.y < top + 39 && e.x < 40)
+    if ((sg.band || sg.optionalBand) && e.y >= top + 21 && e.y < top + 39 && e.x < 40)
     {
         checked[(size_t) r] = ! checked[(size_t) r];
         repaint();
@@ -241,7 +273,7 @@ AnalysisPanel::AnalysisPanel (EditorContext& context) : ctx (context), list (con
 
     for (auto* c : std::initializer_list<juce::Component*> { &primaryButton, &secondaryButton, &instrumentBox, &modeBox, &strengthBox,
                                                               &amountSlider, &countSlider, &preserveToggle, &highPassToggle,
-                                                              &autoApplyToggle, &applyButton, &resetButton, &viewport })
+                                                              &autoApplyToggle, &applyButton, &resetButton, &selectAllButton, &viewport })
         addAndMakeVisible (c);
     addChildComponent (fileButton);
     fileButton.setVisible (isStandalone);
@@ -250,17 +282,13 @@ AnalysisPanel::AnalysisPanel (EditorContext& context) : ctx (context), list (con
     viewport.setScrollBarThickness (8);
 
     // Instrument: chosen by the user, grouped by family.
-    juce::String group;
     instrumentBox.addItem (correction::instrumentName (correction::Instrument::General), 1);
-    for (int i = 1; i < (int) correction::Instrument::NumInstruments; ++i)
+    for (const auto& group : correction::instrumentGroups())
     {
-        const auto inst = (correction::Instrument) i;
-        if (correction::instrumentGroup (inst) != group)
-        {
-            group = correction::instrumentGroup (inst);
-            instrumentBox.addSectionHeading (group);
-        }
-        instrumentBox.addItem (correction::instrumentName (inst), i + 1);
+        instrumentBox.addSectionHeading (group);
+        for (int i = 1; i < (int) correction::Instrument::NumInstruments; ++i)
+            if (correction::instrumentGroup ((correction::Instrument) i) == group)
+                instrumentBox.addItem (correction::instrumentName ((correction::Instrument) i), i + 1);
     }
     instrumentBox.setSelectedId ((int) settings.instrument + 1, juce::dontSendNotification);
     instrumentBox.setTooltip ("The instrument on this track. Corrections respect the parts of the spectrum that make up its sound.");
@@ -337,6 +365,8 @@ AnalysisPanel::AnalysisPanel (EditorContext& context) : ctx (context), list (con
                               });
     };
     applyButton.onClick = [this] { applyChecked(); };
+    selectAllButton.setTooltip ("Tick every proposed move, including the ones EyraEQ would leave alone (or untick all)");
+    selectAllButton.onClick = [this] { list.setAllChecked (! list.allChecked()); };
     resetButton.onClick = [this]
     {
         ctx.processor.resetCorrections();
@@ -421,9 +451,11 @@ void AnalysisPanel::refresh()
     for (int slot : ctx.processor.getCorrectionSlots())
         applied |= ctx.readBand (slot).used;
     const int n = list.numChecked();
-    applyButton.setButtonText ((applied ? "Update corrections" : "Apply corrections") + juce::String (n > 0 ? " (" + juce::String (n) + ")" : ""));
+    applyButton.setButtonText ((applied ? "Update EQ" : "Apply to EQ") + juce::String (n > 0 ? " (" + juce::String (n) + ")" : ""));
     applyButton.setEnabled (n > 0 && ! busy && ! listening);
     resetButton.setEnabled (applied);
+    selectAllButton.setButtonText (list.allChecked() && list.numChecked() > 0 ? "Select none" : "Select all");
+    selectAllButton.setEnabled (! list.getSuggestions().empty());
 
     if (state != shownState || listening || busy)
     {
@@ -566,8 +598,10 @@ void AnalysisPanel::resized()
     autoApplyToggle.setBounds (area.removeFromTop (22));
     area.removeFromTop (4);
     row = area.removeFromTop (28);
-    resetButton.setBounds (row.removeFromRight (70));
-    row.removeFromRight (6);
+    resetButton.setBounds (row.removeFromRight (56));
+    row.removeFromRight (4);
+    selectAllButton.setBounds (row.removeFromRight (80));
+    row.removeFromRight (4);
     applyButton.setBounds (row);
     area.removeFromTop (6);
 

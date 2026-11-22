@@ -34,6 +34,7 @@ juce::String instrumentName (Instrument i)
         case Instrument::Strings:            return "Strings";
         case Instrument::Brass:              return "Brass";
         case Instrument::AcousticInstrument: return "Other acoustic instrument";
+        case Instrument::ScreamingVocal:     return "Screaming vocal";
         case Instrument::NumInstruments:     break;
     }
     return "General (no instrument)";
@@ -50,7 +51,7 @@ juce::String instrumentGroup (Instrument i)
             return "Bass";
         case Instrument::ElectricGuitar: case Instrument::CleanGuitar: case Instrument::DistortedGuitar: case Instrument::AcousticGuitar:
             return "Guitar";
-        case Instrument::MaleVocal: case Instrument::FemaleVocal: case Instrument::Vocal:
+        case Instrument::MaleVocal: case Instrument::FemaleVocal: case Instrument::Vocal: case Instrument::ScreamingVocal:
             return "Vocals";
         case Instrument::Piano: case Instrument::Organ: case Instrument::Synthesizer:
             return "Keys";
@@ -61,6 +62,8 @@ juce::String instrumentGroup (Instrument i)
     }
     return {};
 }
+
+juce::StringArray instrumentGroups() { return { "Drums", "Bass", "Guitar", "Vocals", "Keys", "Other" }; }
 
 namespace
 {
@@ -180,6 +183,13 @@ namespace
                 { { 20, 100, "rumble and plosives" }, { 100, 250, "chest" }, { 250, 600, "mud" }, { 600, 1600, "nasal honk" },
                   { 1600, 5000, "presence and harshness" }, { 5000, 10000, "sibilance" }, { 10000, 20000, "air" } });
 
+        // Screamed vocals: energy sits in the upper mids (grit), little chest, a lot of 2-5 kHz edge.
+        target (p, I::ScreamingVocal, 120, 14000,
+                { { 100, -22 }, { 150, -12 }, { 250, -5 }, { 400, -2 }, { 700, 0 }, { 1200, 0 }, { 2000, 0 }, { 3000, -1 }, { 4500, -4 },
+                  { 6500, -8 }, { 9000, -13 }, { 13000, -19 } },
+                { { 20, 120, "rumble and plosives" }, { 120, 300, "chest" }, { 300, 700, "boxiness" }, { 700, 2000, "aggression" },
+                  { 2000, 5000, "harshness (ice pick)" }, { 5000, 10000, "fizz and sibilance" }, { 10000, 20000, "air" } });
+
         // Keys and others
         target (p, I::Piano, 30, 13000,
                 { { 30, -14 }, { 60, -5 }, { 120, -1 }, { 250, 0 }, { 500, 0 }, { 1000, -3 }, { 2000, -7 }, { 4000, -11 }, { 8000, -17 },
@@ -239,6 +249,9 @@ namespace
                              { shelf, 10000, 10000, 2.0, 0.7, "air" } });
         set (I::FemaleVocal, { { bell, 250, 500, -2.5, 1.2, "mud" }, { bell, 3000, 5000, 2.0, 1.0, "presence" },
                                { shelf, 11000, 11000, 2.0, 0.7, "air" } });
+        set (I::ScreamingVocal, { { bell, 300, 600, -3.0, 1.2, "boxiness" }, { bell, 1000, 2000, 1.5, 1.0, "aggression and cut-through" },
+                                  { bell, 2500, 5000, -2.5, 2.0, "harshness (ice pick)" }, { bell, 5500, 9000, -2.0, 2.0, "fizz" },
+                                  { shelf, 11000, 11000, 1.0, 0.7, "air" } });
         set (I::Vocal, { { bell, 220, 450, -3.0, 1.2, "mud" }, { bell, 2500, 4500, 2.0, 1.0, "presence" },
                          { shelf, 10000, 10000, 2.0, 0.7, "air" } });
 
@@ -325,6 +338,10 @@ namespace
              { { 2000.0, 5000.0, "presence and intelligibility" } },
              { bell (3000.0, 1.0, 1.0, "presence"), air (10000.0, 1.5) });
 
+        set (Instrument::ScreamingVocal, 110.0, true,
+             { { 1000.0, 2500.0, "grit and aggression" } },
+             {});
+
         // Keys
         set (Instrument::Piano, 30.0, true,
              { { 2000.0, 5000.0, "hammer attack" } },
@@ -350,7 +367,7 @@ namespace
         for (auto i : { Instrument::KickDrum, Instrument::SnareDrum, Instrument::RackTom, Instrument::FloorTom, Instrument::Toms,
                         Instrument::Percussion, Instrument::ElectricBass, Instrument::AcousticBass, Instrument::SynthBass,
                         Instrument::ElectricGuitar, Instrument::CleanGuitar, Instrument::DistortedGuitar, Instrument::AcousticGuitar,
-                        Instrument::MaleVocal, Instrument::FemaleVocal, Instrument::Vocal })
+                        Instrument::MaleVocal, Instrument::FemaleVocal, Instrument::Vocal, Instrument::ScreamingVocal })
             p[(size_t) i].followsFundamental = true;
         return p;
     }

@@ -242,6 +242,13 @@ public:
             expect (forFinding (all, 0)->reason.contains ("Minor"), forFinding (all, 0)->reason);
             s.strength = Strength::Moderate;
             expect (forFinding (generateCorrections (r, s), 0)->band.has_value());
+
+            // Left alone, but still available to choose.
+            s.strength = Strength::Gentle;
+            const auto* alone = forFinding (generateCorrections (r, s), 0);
+            expect (alone->optionalBand.has_value(), "a left-alone finding can still be applied");
+            if (alone->optionalBand)
+                expect (alone->optionalBand->gainDb < 0.0 && std::abs (alone->optionalBand->frequency - 1000.0) < 1.0);
         }
 
         beginTest ("Instrument character: the same buildup is treated differently");
@@ -470,6 +477,28 @@ public:
             for (const auto& sg : withBands (generateCorrections (boomy, s)))
                 cutNote |= sg.band->type != dsp::FilterType::HighPass && sg.band->frequency < 200.0;
             expect (cutNote, "Preserve character off: the boom is cut");
+        }
+
+        beginTest ("Screaming vocal: grit kept, ice-pick harshness and fizz tamed");
+        {
+            Settings s;
+            s.instrument = Instrument::ScreamingVocal;
+            expect (instrumentGroup (Instrument::ScreamingVocal) == "Vocals");
+            // A scream with extra 3.5 kHz edge.
+            auto scream = resultShapedLike (Instrument::ScreamingVocal, { { 3500.0, 7.0 } });
+            bool harshCut = false, gritCut = false;
+            for (const auto& sg : withBands (generateCorrections (scream, s)))
+            {
+                harshCut |= sg.band->gainDb < 0.0 && sg.band->frequency >= 2500.0 && sg.band->frequency <= 5000.0;
+                gritCut |= sg.band->gainDb < -0.1 && sg.band->frequency >= 1000.0 && sg.band->frequency < 2000.0;
+            }
+            expect (harshCut, "harshness cut");
+            expect (! gritCut, "the 1-2 kHz grit is not cut");
+            // Its normal upper-mid weight is not a problem the way it would be on a clean vocal.
+            auto typical = resultShapedLike (Instrument::ScreamingVocal);
+            const auto cmp = compareToTarget (typical, Instrument::ScreamingVocal, Strength::Moderate);
+            for (auto d : cmp.deviationDb)
+                expect (std::abs (d) < 0.5);
         }
 
         beginTest ("No analysis, no corrections; settings round-trip");

@@ -44,6 +44,8 @@ struct Suggestion
 
     Kind kind = Kind::Cut;
     std::optional<dsp::BandParams> band; // empty for LeftAlone
+    /** LeftAlone: the band the user may still choose to apply (not ticked by default). */
+    std::optional<dsp::BandParams> optionalBand;
     int findingIndex = -1;               // index into AnalysisResult::findings, -1 if none
     juce::String heading;                // for suggestions without a finding, e.g. "Boxiness (cardboard)"
     juce::String title;                  // e.g. "Cut 3.5 dB at 824 Hz"

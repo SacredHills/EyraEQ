@@ -22,6 +22,8 @@ public:
     /** Bands of the ticked suggestions, in list order. */
     std::vector<dsp::BandParams> checkedBands() const;
     int numChecked() const;
+    bool allChecked() const;
+    void setAllChecked (bool);
 
     int getIdealHeight (int width) const;
 
@@ -73,7 +75,7 @@ private:
     juce::Slider amountSlider, countSlider;
     juce::ToggleButton preserveToggle { "Preserve character" }, highPassToggle { "Auto high-pass" },
                        autoApplyToggle { "Apply automatically after analysis" };
-    juce::TextButton applyButton { "Apply corrections" }, resetButton { "Reset" };
+    juce::TextButton applyButton { "Apply corrections" }, resetButton { "Reset" }, selectAllButton { "Select all" };
     SuggestionList list;
     juce::Viewport viewport;
     std::unique_ptr<juce::FileChooser> chooser;
