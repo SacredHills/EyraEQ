@@ -64,6 +64,31 @@ as commonly described in mixing practice), written by hand in `Instrument.cpp`. 
 from a dataset, the tolerances are deliberately wide, and they can be refined from real stems. Synthesizer,
 "other acoustic instrument" and General have no curve and use the generic analysis.
 
+The low main peak (a drum's note, a bass's or voice's register) differs from track to track, so for
+drums, basses, guitars and vocals the low part of the curve is moved to the track's measured main peak
+(up to an octave either way) before comparing. With **Preserve character** on, that peak itself is
+never cut: a tom tuned to 105 Hz keeps its note even if the typical rack tom sits near 160 Hz.
+
+### The usual moves for each instrument
+
+On top of fixing what is measured as wrong, each instrument gets the moves engineers commonly make on
+it, for example:
+
+| Instrument | Usual moves |
+|---|---|
+| Kick | cut boxiness 250–600 Hz; add punch 45–90 Hz and beater click 2.5–5 kHz |
+| Snare | add body 150–260 Hz and crack 4–6.5 kHz; cut boxiness / ring 400–900 Hz |
+| Toms | a little more of the drum's own note; cut boxiness 280–700 Hz; add stick attack 3–5.5 kHz |
+| Bass | cut mud 200–400 Hz; add weight 60–100 Hz and note definition 0.7–1.2 kHz |
+| Vocals | cut mud 200–450 Hz; add presence 2.5–5 kHz and air (shelf at 10–11 kHz) |
+| Guitars | cut mud / boom; add presence or sparkle (distorted: tame fizz 3–5 kHz) |
+
+(Full list in `Instrument.cpp`.) Each move is **placed** where the track needs it most within its range
+(the most excess for a cut, the most lacking for a boost) and **sized** from the measurement: the usual
+amount on a track that matches the typical balance, more where the track has too much (cut) or too
+little (boost), and dropped when the track does not need it. A usual cut is also dropped where a
+measured problem already has a cut. Cuts are made in both modes, boosts only in **Polished** (the default).
+
 Narrow peaks on a single instrument are treated more carefully than on a mix:
 
 - **Drums and cymbals**: heads and shells ring at their own inharmonic frequencies, which are part of
@@ -86,7 +111,7 @@ Each instrument profile also has:
 - **Polished enhancements** for instruments without a typical curve: fixed subtle boosts, offered
   only when no problem was measured nearby and the recording has content there.
 
-**Transparent** mode never boosts; **Polished** adds the enhancements.
+**Transparent** mode never boosts; **Polished** (default) adds the usual boosts and enhancements.
 
 ## Testing
 

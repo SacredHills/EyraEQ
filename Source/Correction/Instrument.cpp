@@ -201,6 +201,53 @@ namespace
                   { 2000, 6000, "blare and harshness" }, { 6000, 20000, "air" } });
     }
 
+
+    void addMoves (std::array<InstrumentProfile, (size_t) Instrument::NumInstruments>& p)
+    {
+        using I = Instrument;
+        using M = TypicalMove;
+        const auto bell = M::Shape::Bell, shelf = M::Shape::HighShelf, peak = M::Shape::AtMainPeak;
+        auto set = [&] (I i, std::vector<TypicalMove> m) { p[(size_t) i].moves = std::move (m); };
+
+        set (I::KickDrum, { { bell, 250, 600, -3.0, 1.4, "boxiness" }, { bell, 45, 90, 2.0, 1.2, "low-end punch" },
+                            { bell, 2500, 5000, 2.5, 1.5, "beater click" } });
+        set (I::SnareDrum, { { bell, 150, 260, 2.0, 1.4, "body" }, { bell, 400, 900, -3.0, 1.6, "boxiness and ring" },
+                             { bell, 4000, 6500, 2.0, 1.0, "crack" } });
+        const std::vector<TypicalMove> tom { { peak, 0, 0, 1.5, 1.5, "body (the drum's note)" }, { bell, 280, 700, -3.5, 1.5, "boxiness" },
+                                             { bell, 3000, 5500, 2.5, 1.2, "stick attack" } };
+        set (I::RackTom, tom);
+        set (I::FloorTom, tom);
+        set (I::Toms, tom);
+        set (I::Cymbals, { { bell, 2000, 4500, -1.5, 1.2, "harshness" }, { shelf, 10000, 10000, 1.5, 0.7, "air" } });
+        set (I::Overheads, { { bell, 300, 600, -2.0, 1.0, "boxiness (room)" }, { shelf, 10000, 10000, 1.5, 0.7, "air" } });
+        set (I::Percussion, { { bell, 300, 600, -2.0, 1.2, "boxiness" }, { shelf, 10000, 10000, 1.5, 0.7, "air" } });
+
+        set (I::ElectricBass, { { bell, 200, 400, -3.0, 1.2, "mud" }, { bell, 60, 100, 1.5, 1.0, "weight" },
+                                { bell, 700, 1200, 2.0, 1.4, "note definition" } });
+        set (I::AcousticBass, { { bell, 200, 400, -2.5, 1.2, "mud and boom" }, { bell, 1500, 3000, 1.5, 1.2, "finger attack" } });
+        set (I::SynthBass, { { bell, 200, 400, -2.5, 1.2, "mud" } });
+
+        set (I::ElectricGuitar, { { bell, 200, 400, -2.5, 1.2, "mud" }, { bell, 2500, 4000, 1.5, 1.0, "presence" } });
+        set (I::CleanGuitar, { { bell, 200, 400, -2.0, 1.2, "mud" }, { bell, 3000, 5000, 1.5, 1.0, "clarity" },
+                               { shelf, 10000, 10000, 1.0, 0.7, "air" } });
+        set (I::DistortedGuitar, { { bell, 200, 400, -2.5, 1.2, "mud" }, { bell, 3000, 5000, -2.0, 2.0, "fizz and harshness" },
+                                   { bell, 1400, 2500, 1.5, 1.2, "mid push" } });
+        set (I::AcousticGuitar, { { bell, 150, 300, -3.0, 1.2, "boom" }, { bell, 600, 1000, -1.5, 1.4, "boxiness" },
+                                  { shelf, 10000, 10000, 2.0, 0.7, "sparkle" } });
+
+        set (I::MaleVocal, { { bell, 200, 400, -3.0, 1.2, "mud" }, { bell, 2500, 4000, 2.0, 1.0, "presence" },
+                             { shelf, 10000, 10000, 2.0, 0.7, "air" } });
+        set (I::FemaleVocal, { { bell, 250, 500, -2.5, 1.2, "mud" }, { bell, 3000, 5000, 2.0, 1.0, "presence" },
+                               { shelf, 11000, 11000, 2.0, 0.7, "air" } });
+        set (I::Vocal, { { bell, 220, 450, -3.0, 1.2, "mud" }, { bell, 2500, 4500, 2.0, 1.0, "presence" },
+                         { shelf, 10000, 10000, 2.0, 0.7, "air" } });
+
+        set (I::Piano, { { bell, 200, 400, -2.0, 1.2, "mud" }, { shelf, 8000, 8000, 1.5, 0.7, "brightness" } });
+        set (I::Organ, { { bell, 200, 500, -2.0, 1.2, "mud" } });
+        set (I::Strings, { { bell, 250, 500, -2.0, 1.2, "mud" }, { shelf, 9000, 9000, 1.5, 0.7, "air" } });
+        set (I::Brass, { { bell, 300, 600, -2.0, 1.2, "boxiness" }, { bell, 2000, 3000, 1.5, 1.2, "brilliance" } });
+    }
+
     std::array<InstrumentProfile, (size_t) Instrument::NumInstruments> makeProfiles()
     {
         std::array<InstrumentProfile, (size_t) Instrument::NumInstruments> p;
@@ -296,9 +343,15 @@ namespace
              {},
              { air (10000.0, 1.0) });
         addTargets (p);
+        addMoves (p);
         for (auto i : { Instrument::KickDrum, Instrument::SnareDrum, Instrument::RackTom, Instrument::FloorTom, Instrument::Toms,
                         Instrument::Cymbals, Instrument::Percussion })
             p[(size_t) i].drum = true;
+        for (auto i : { Instrument::KickDrum, Instrument::SnareDrum, Instrument::RackTom, Instrument::FloorTom, Instrument::Toms,
+                        Instrument::Percussion, Instrument::ElectricBass, Instrument::AcousticBass, Instrument::SynthBass,
+                        Instrument::ElectricGuitar, Instrument::CleanGuitar, Instrument::DistortedGuitar, Instrument::AcousticGuitar,
+                        Instrument::MaleVocal, Instrument::FemaleVocal, Instrument::Vocal })
+            p[(size_t) i].followsFundamental = true;
         return p;
     }
 } // namespace

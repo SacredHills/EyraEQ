@@ -19,9 +19,9 @@ struct Settings
 {
     Instrument instrument = Instrument::General;
     Strength strength = Strength::Moderate;
-    Mode mode = Mode::Transparent;
+    Mode mode = Mode::Polished;
     double amount = 1.0;          // 0..1.5, scales every gain
-    int maxCorrections = 6;       // 1..12
+    int maxCorrections = 8;       // 1..12
     bool preserveCharacter = true;
     bool autoHighPass = true;     // also suggest a high-pass suited to the instrument (none for General)
     bool applyAutomatically = false; // apply as soon as an analysis finishes (otherwise: suggestions)
@@ -61,6 +61,8 @@ struct TargetComparison
     bool valid = false;
     std::vector<double> frequencies, measuredDb, targetDb, deviationDb; // deviation smoothed over 1/3 octave
     double toleranceDb = 0.0;
+    /** Main low peak: measured, and where the typical curve had it (equal if not followed). */
+    double measuredPeakHz = 0.0, typicalPeakHz = 0.0;
 };
 
 TargetComparison compareToTarget (const analysis::AnalysisResult&, Instrument, Strength);

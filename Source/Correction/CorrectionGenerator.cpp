@@ -158,7 +158,7 @@ TargetComparison compareToTarget (const analysis::AnalysisResult& r, Instrument 
             return -200.0;
         return a + t * (b - a) + 10.0 * std::log10 (f / 1000.0);
     };
-    auto targetAt = [&] (double f)
+    auto baseTargetAt = [&] (double f)
     {
         const auto& P = profile.target;
         if (f <= P.front().first)
@@ -172,6 +172,53 @@ TargetComparison compareToTarget (const analysis::AnalysisResult& r, Instrument 
                 return P[i - 1].second + t * (P[i].second - P[i - 1].second);
             }
         return P.back().second;
+    };
+
+    // Centre of the main low peak: level-weighted mean frequency of the points within 1.5 dB of the
+    // highest level, searched in [lo, hi].
+    auto peakCentre = [] (auto levelAt, double lo, double hi)
+    {
+        double best = -1.0e9;
+        for (double f = lo; f <= hi; f *= std::pow (2.0, 1.0 / 24.0))
+            best = std::max (best, levelAt (f));
+        double sum = 0.0, weight = 0.0;
+        for (double f = lo; f <= hi; f *= std::pow (2.0, 1.0 / 24.0))
+            if (const double l = levelAt (f); l >= best - 1.5)
+            {
+                const double w = std::pow (10.0, (l - best) / 10.0);
+                sum += w * std::log (f);
+                weight += w;
+            }
+        return weight > 0.0 ? std::exp (sum / weight) : 0.0;
+    };
+
+    // Typical peak: the curve's highest region below 2 kHz.
+    c.typicalPeakHz = peakCentre (baseTargetAt, std::max (20.0, profile.fitLowHz * 0.7), 2000.0);
+    c.measuredPeakHz = c.typicalPeakHz;
+    double ratio = 1.0;
+    if (profile.followsFundamental && c.typicalPeakHz > 0.0)
+    {
+        const double lo = std::max (20.0, c.typicalPeakHz / 2.0), hi = c.typicalPeakHz * 2.0;
+        const double measured = peakCentre ([&] (double f) { const double m = measuredAt (f); return m <= -150.0 ? -1.0e9 : m; }, lo, hi);
+        if (measured > 0.0)
+        {
+            ratio = juce::jlimit (0.5, 2.0, measured / c.typicalPeakHz);
+            c.measuredPeakHz = c.typicalPeakHz * ratio;
+        }
+    }
+
+    // The low part follows the measured peak; from 3x to 8x the peak it blends back to the typical curve.
+    auto targetAt = [&] (double f)
+    {
+        if (std::abs (ratio - 1.0) < 1.0e-6)
+            return baseTargetAt (f);
+        const double p = c.measuredPeakHz;
+        double shift = ratio;
+        if (f > 8.0 * p)
+            shift = 1.0;
+        else if (f > 3.0 * p)
+            shift = std::pow (ratio, 1.0 - std::log (f / (3.0 * p)) / std::log (8.0 / 3.0));
+        return baseTargetAt (f / shift);
     };
 
     const double hi = std::min (profile.fitHighHz, std::min (20000.0, 0.45 * r.sampleRate));
@@ -474,11 +521,19 @@ std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult& r, 
                     double cut = std::min (tuning.capBroad, (over - 0.5 * tol) * tuning.scale);
                     sg.reason = "Around " + hz (peakHz) + " this track is " + juce::String (over, 1) + " dB above the typical "
                               + name + " balance (allowed: " + juce::String (tol, 1) + " dB).";
+                    if (s.preserveCharacter && profile.followsFundamental
+                        && octavesBetween (peakHz, comparison.measuredPeakHz) < 0.5)
+                    {
+                        leftAlone (-1, "Left alone", "Around " + hz (peakHz) + " is this track's main low peak (its note or body), "
+                                                     "which makes up the instrument's sound. Turn off Preserve character to allow a cut here.");
+                        out.back().heading = sg.heading;
+                        continue;
+                    }
                     if (s.preserveCharacter)
                         if (const auto* region = characterRegionFor (character, lo, hi))
                         {
-                            cut *= 0.6;
-                            sg.reason += " Cut kept smaller: this is the " + region->what + ".";
+                            cut = std::min (cut * 0.6, 3.0);
+                            sg.reason += " Cut kept small: this is the " + region->what + ".";
                         }
                     cut *= amount;
                     if (cut < 0.5)
@@ -495,7 +550,7 @@ std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult& r, 
                 }
                 else
                 {
-                    if (s.mode != Mode::Polished || atBottom)
+                    if (s.mode != Mode::Polished || atBottom || ! profile.moves.empty())
                         continue;
                     const double cap = 1.5 * tuning.polish + 0.5;
                     const double boost = std::min (cap, (over - tol) * 0.5) * amount;
@@ -523,6 +578,81 @@ std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult& r, 
                 if (f.highFrequency >= c.lo && f.lowFrequency <= c.hi)
                     reason = "Handled by the " + name + " balance correction in this region.";
             leftAlone (index, "Left alone", reason);
+        }
+    }
+
+
+    // --- The usual mixing moves for the instrument, placed and sized from the measurement -------
+    if (! profile.moves.empty() && comparison.valid)
+    {
+        const auto& F = comparison.frequencies;
+        const auto& D = comparison.deviationDb;
+        const juce::String name = instrumentName (s.instrument).toLowerCase();
+        auto deviationAt = [&] (double f)
+        {
+            size_t best = 0;
+            for (size_t k = 1; k < F.size(); ++k)
+                if (octavesBetween (F[k], f) < octavesBetween (F[best], f))
+                    best = k;
+            return D[best];
+        };
+        auto cutNear = [&] (double f, double octaves)
+        {
+            for (const auto& o : out)
+                if (o.band && o.kind == K::Cut && octavesBetween (o.band->frequency, f) < octaves)
+                    return true;
+            return false;
+        };
+
+        for (const auto& m : profile.moves)
+        {
+            const bool boost = m.gainDb > 0.0;
+            if (boost && s.mode != Mode::Polished)
+                continue;
+
+            // Where: the point in the range that most needs it (most excess for a cut, most lacking for a boost).
+            double freq = m.lowHz;
+            if (m.shape == TypicalMove::Shape::AtMainPeak)
+                freq = comparison.measuredPeakHz;
+            else if (m.shape == TypicalMove::Shape::Bell)
+            {
+                double bestScore = -1.0e9;
+                freq = std::sqrt (m.lowHz * m.highHz);
+                for (size_t k = 0; k < F.size(); ++k)
+                    if (F[k] >= m.lowHz && F[k] <= m.highHz)
+                        if (const double score = boost ? -D[k] : D[k]; score > bestScore)
+                            bestScore = score, freq = F[k];
+            }
+            if (freq <= 0.0 || freq > 0.45 * r.sampleRate)
+                continue;
+            if (r.highestContentHz > 0.0 && boost && freq > r.highestContentHz)
+                continue; // nothing there to bring out
+
+            // How much: the usual amount, more where the track has too much (cut) or too little (boost).
+            const double d = (m.shape == TypicalMove::Shape::HighShelf) ? deviationAt (freq * 1.3) : deviationAt (freq);
+            double gain = boost ? m.gainDb - 0.5 * d : -(std::abs (m.gainDb) + 0.5 * d);
+            gain = boost ? juce::jlimit (0.0, 1.5 * m.gainDb, gain) : juce::jlimit (-tuning.capBroad, 0.0, gain);
+            gain *= tuning.polish * amount;
+
+            Suggestion sg;
+            sg.heading = juce::String (m.what).substring (0, 1).toUpperCase() + juce::String (m.what).substring (1);
+            if (std::abs (gain) < (boost ? 0.5 : 1.0))
+                continue; // the track does not need it
+            if (cutNear (freq, 0.5))
+                continue; // a measured problem cut already works here
+            if (! boost && s.preserveCharacter && profile.followsFundamental && octavesBetween (freq, comparison.measuredPeakHz) < 0.5)
+                continue;
+
+            sg.kind = boost ? K::Enhancement : K::Cut;
+            sg.band = m.shape == TypicalMove::Shape::HighShelf ? makeBand (dsp::FilterType::HighShelf, freq, gain, 0.7071)
+                                                               : makeBand (dsp::FilterType::Bell, freq, gain, m.q);
+            sg.title = describeBand (*sg.band);
+            sg.reason = "A usual move for a " + name + " (" + m.what + "). "
+                      + (std::abs (d) < 1.0 ? juce::String ("This track is close to the typical balance here, so the usual amount.")
+                                            : "This track is " + juce::String (std::abs (d), 1) + " dB " + (d > 0 ? "above" : "below")
+                                                  + " the typical balance here, so " + ((d > 0) != boost ? "more." : "less."));
+            sg.priority = boost ? 0.05 : 0.25;
+            out.push_back (sg);
         }
     }
 

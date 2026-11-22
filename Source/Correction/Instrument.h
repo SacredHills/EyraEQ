@@ -62,6 +62,21 @@ struct Enhancement
 };
 
 /**
+    One of the usual mixing moves for an instrument ("cut boxiness 250-600 Hz", "add presence 2.5-4 kHz").
+    The plug-in places it where the track needs it within the range and sizes it from the measurement:
+    a move the track does not need is dropped.
+*/
+struct TypicalMove
+{
+    enum class Shape { Bell, HighShelf, AtMainPeak }; // AtMainPeak: a bell on the track's measured main low peak
+    Shape shape = Shape::Bell;
+    double lowHz = 0.0, highHz = 0.0;
+    double gainDb = 0.0;   // at Moderate strength, 100% amount, on a track that matches the typical balance
+    double q = 1.0;
+    juce::String what;     // "boxiness", "presence"
+};
+
+/**
     What EyraEQ knows about an instrument. Character regions are where an instrument naturally has a
     lot of energy: a broad excess there is treated with more care (less cut, higher threshold) instead
     of being assumed to be a problem.
@@ -79,6 +94,9 @@ struct InstrumentProfile
     */
     std::vector<std::pair<double, double>> target;
     double fitLowHz = 0.0, fitHighHz = 0.0;   // range compared with the target
+    /** The low main peak (a drum's note, a bass's or voice's register) varies from track to track:
+        the target's low part is moved to the measured peak, up to an octave either way. */
+    bool followsFundamental = false;
     /** Names for parts of the spectrum ("boxiness", "sibilance"...), used to label corrections. */
     std::vector<CharacterRegion> zones;
 
@@ -91,6 +109,8 @@ struct InstrumentProfile
     bool drum = false;
     std::vector<CharacterRegion> character;
     std::vector<Enhancement> polish;
+    /** The usual mixing moves for the instrument (cuts in Transparent and Polished, boosts in Polished). */
+    std::vector<TypicalMove> moves;
 };
 
 const InstrumentProfile& profileFor (Instrument);

@@ -147,7 +147,7 @@ int usedBands (EyraEQAudioProcessor& p)
 
 
 /** A result whose measured spectrum is the instrument's typical balance, plus optional bumps (dB over an octave). */
-AnalysisResult resultShapedLike (Instrument instrument, std::vector<std::pair<double, double>> bumps = {})
+AnalysisResult resultShapedLike (Instrument instrument, std::vector<std::pair<double, double>> bumps = {}, double frequencyScale = 1.0)
 {
     auto r = okResult();
     r.sampleRate = 48000.0;
@@ -164,7 +164,7 @@ AnalysisResult resultShapedLike (Instrument instrument, std::vector<std::pair<do
     for (int i = 0; i < 512; ++i)
     {
         const double f = 10.0 * std::pow (3000.0, i / 511.0);
-        double db = targetAt (f) - 10.0 * std::log10 (f / 1000.0) - 40.0;
+        double db = targetAt (f / frequencyScale) - 10.0 * std::log10 (f / 1000.0) - 40.0;
         for (auto [centre, gain] : bumps)
         {
             const double oct = std::abs (std::log2 (f / centre));
@@ -303,6 +303,7 @@ public:
             expect (all.front().kind == K::HighPass, "rumble first");
 
             Settings s;
+            s.mode = Mode::Transparent;
             s.autoHighPass = false;
             s.instrument = Instrument::MaleVocal;
             r.findings.clear();
@@ -327,6 +328,7 @@ public:
             auto r = okResult();
             r.findings = { narrow (FindingType::Resonance, 500.0, 8.0, 10.0) };
             Settings s;
+            s.mode = Mode::Transparent;
             s.instrument = Instrument::Vocal;
             for (const auto& sg : withBands (generateCorrections (r, s)))
                 expect (sg.band->gainDb <= 0.0 || sg.band->type == dsp::FilterType::HighPass);
@@ -369,14 +371,25 @@ public:
             Settings s;
             s.instrument = Instrument::KickDrum;
             s.autoHighPass = false;
+            s.mode = Mode::Transparent;
 
-            // A kick that looks like a typical kick: its huge low end is not a problem.
+            // A kick that looks like a typical kick: its huge low end is not a problem; it gets only the
+            // usual boxiness cut, at the usual size.
             auto typical = resultShapedLike (Instrument::KickDrum);
             const auto cmp = compareToTarget (typical, Instrument::KickDrum, Strength::Moderate);
             expect (cmp.valid);
             for (auto d : cmp.deviationDb)
                 expect (std::abs (d) < 0.5, "deviation of a typical kick: " + juce::String (d, 2));
-            expect (withBands (generateCorrections (typical, s)).empty(), "typical kick: nothing to correct");
+            {
+                const auto bands = withBands (generateCorrections (typical, s));
+                expectEquals ((int) bands.size(), 1, "typical kick: only the usual boxiness cut");
+                if (! bands.empty())
+                {
+                    expect (bands[0].reason.contains ("usual move"), bands[0].reason);
+                    expect (bands[0].band->frequency >= 250.0 && bands[0].band->frequency <= 600.0);
+                    expectWithinAbsoluteError (bands[0].band->gainDb, -3.0, 0.6);
+                }
+            }
 
             // The same kick with 8 dB too much around 400 Hz: a boxiness cut there.
             auto boxy = resultShapedLike (Instrument::KickDrum, { { 400.0, 8.0 } });
@@ -390,12 +403,13 @@ public:
                 expect (cuts[0].reason.contains ("typical kick drum balance"), cuts[0].reason);
             }
 
-            // On a vocal, the same 400 Hz region is the voice's body: a mild hump is left alone ...
+            // On a vocal, a mild hump the generic analysis calls mud is normal: only the usual mud move.
             s.instrument = Instrument::MaleVocal;
             auto vocal = resultShapedLike (Instrument::MaleVocal);
             vocal.findings = { broad (200.0, 300.0, 450.0, 3.0) }; // the generic analysis calls it mud
             auto all = generateCorrections (vocal, s);
-            expect (withBands (all).empty());
+            for (const auto& sg : withBands (all))
+                expect (sg.reason.contains ("usual move"), sg.reason);
             expect (forFinding (all, 0)->kind == K::LeftAlone);
             expect (forFinding (all, 0)->reason.contains ("Normal for this instrument (male vocal)"), forFinding (all, 0)->reason);
 
@@ -416,13 +430,13 @@ public:
             int cutsFound = 0, boosts = 0;
             for (const auto& sg : withBands (generateCorrections (harsh, s)))
             {
-                cutsFound += sg.kind == K::Cut ? 1 : 0;
+                cutsFound += sg.kind == K::Cut && sg.band->frequency > 2000.0 ? 1 : 0;
                 boosts += sg.kind == K::Enhancement ? 1 : 0;
                 if (sg.kind == K::Enhancement)
                     expect (sg.band->gainDb > 0.0 && sg.band->gainDb <= 3.0, sg.title);
             }
             expectEquals (cutsFound, 1, "harshness cut");
-            expectEquals (boosts, 1, "air added back");
+            expect (boosts >= 1, "presence / air in Polished");
             s.mode = Mode::Transparent;
             for (const auto& sg : withBands (generateCorrections (harsh, s)))
                 expect (sg.band->gainDb <= 0.0, "Transparent never boosts");
@@ -430,6 +444,32 @@ public:
             // Instruments without a typical balance (synthesizer) use the generic analysis.
             expect (! compareToTarget (typical, Instrument::Synthesizer, Strength::Moderate).valid);
             expect (! compareToTarget (typical, Instrument::General, Strength::Moderate).valid);
+        }
+
+        beginTest ("The typical curve follows the track's own note: a low-tuned tom keeps its fundamental");
+        {
+            Settings s;
+            s.instrument = Instrument::RackTom;
+            s.strength = Strength::Aggressive;
+            s.mode = Mode::Polished;
+            s.amount = 1.5;
+            auto lowTom = resultShapedLike (Instrument::RackTom, {}, 0.65); // tuned about 0.6 octave lower than typical
+            const auto cmp = compareToTarget (lowTom, Instrument::RackTom, Strength::Aggressive);
+            expect (cmp.valid);
+            expectWithinAbsoluteError (cmp.measuredPeakHz / cmp.typicalPeakHz, 0.65, 0.08);
+            for (const auto& sg : withBands (generateCorrections (lowTom, s)))
+                expect (sg.band->type == dsp::FilterType::HighPass || sg.band->gainDb > 0.0 || sg.band->frequency > 250.0,
+                        "the tom's note is not cut: " + sg.title);
+
+            // Even a genuinely boomy note is left alone with Preserve character, and cut when it is off.
+            auto boomy = resultShapedLike (Instrument::RackTom, { { 104.0, 10.0 } }, 0.65);
+            for (const auto& sg : withBands (generateCorrections (boomy, s)))
+                expect (sg.band->type == dsp::FilterType::HighPass || sg.band->gainDb > 0.0 || sg.band->frequency > 250.0, sg.title);
+            s.preserveCharacter = false;
+            bool cutNote = false;
+            for (const auto& sg : withBands (generateCorrections (boomy, s)))
+                cutNote |= sg.band->type != dsp::FilterType::HighPass && sg.band->frequency < 200.0;
+            expect (cutNote, "Preserve character off: the boom is cut");
         }
 
         beginTest ("No analysis, no corrections; settings round-trip");
