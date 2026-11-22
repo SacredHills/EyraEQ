@@ -1,0 +1,86 @@
+#pragma once
+
+#include "Analysis/SpectrumAnalyzer.h"
+#include "DSP/EQEngine.h"
+#include "Parameters/Parameters.h"
+#include "State/ABComparison.h"
+#include "State/EditHistory.h"
+#include "State/PresetManager.h"
+
+#include <juce_audio_processors/juce_audio_processors.h>
+
+/** Per-instance editor / analyser preferences, saved with the plug-in state. */
+struct EyraUIState
+{
+    eyra::analysis::AnalyzerSettings analyzer;
+    bool showPreSpectrum = true;
+    bool showPostSpectrum = true;
+    float displayRangeDb = 18.0f; // +/- range of the EQ curve scale: 6, 12, 18, 30
+    int editorWidth = 1120;
+    int editorHeight = 680;
+};
+
+class EyraEQAudioProcessor final : public juce::AudioProcessor
+{
+public:
+    EyraEQAudioProcessor();
+    ~EyraEQAudioProcessor() override = default;
+
+    //==============================================================================
+    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    void releaseResources() override;
+    bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using AudioProcessor::processBlock;
+
+    juce::AudioProcessorEditor* createEditor() override;
+    bool hasEditor() const override { return true; }
+
+    const juce::String getName() const override { return JucePlugin_Name; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    bool isMidiEffect() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return presets.getCurrentPresetName(); }
+    void changeProgramName (int, const juce::String&) override {}
+
+    void getStateInformation (juce::MemoryBlock& destData) override;
+    void setStateInformation (const void* data, int sizeInBytes) override;
+
+    juce::AudioProcessorParameter* getBypassParameter() const override;
+
+    //==============================================================================
+    juce::AudioProcessorValueTreeState apvts;
+
+    eyra::analysis::AnalyzerFifo preFifo, postFifo;
+
+    eyra::state::EditHistory history;
+    eyra::state::ABComparison ab;
+    eyra::state::PresetManager presets;
+
+    /** Band currently soloed for audition (-1 = none). Not saved, not automatable. */
+    std::atomic<int> soloBand { -1 };
+
+    EyraUIState getUIState() const;
+    void setUIState (const EyraUIState&);
+
+    /** Current sample rate as seen by the audio engine (for drawing exact responses). */
+    double getEngineSampleRate() const noexcept { return engineSampleRate.load(); }
+
+    /** For tests. */
+    eyra::dsp::EQEngine& getEngine() noexcept { return engine; }
+
+private:
+    eyra::params::ParameterReader reader;
+    eyra::dsp::EQEngine engine;
+    std::atomic<double> engineSampleRate { 48000.0 };
+
+    mutable juce::CriticalSection uiStateLock;
+    EyraUIState uiState;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EyraEQAudioProcessor)
+};

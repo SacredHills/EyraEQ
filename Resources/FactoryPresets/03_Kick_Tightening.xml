@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EyraEQPreset name="Kick Tightening" version="1" inputGain="0" outputGain="0">
+  <Band index="1" type="HighPass" freq="30" gain="0" q="0.707" slope="24" placement="Stereo" bypass="0"/>
+  <Band index="2" type="Bell" freq="350" gain="-4.0" q="1.4" slope="12" placement="Stereo" bypass="0"/>
+  <Band index="3" type="Bell" freq="3500" gain="3.0" q="1.5" slope="12" placement="Stereo" bypass="0"/>
+</EyraEQPreset>
