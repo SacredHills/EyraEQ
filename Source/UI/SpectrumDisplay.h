@@ -61,11 +61,12 @@ private:
     void drawGrid (juce::Graphics&);
     void drawSpectrum (juce::Graphics&, const std::vector<float>& levels, juce::Colour colour, bool filled);
     void drawReadout (juce::Graphics&, int band);
+    void drawAnalysisOverlay (juce::Graphics&);
     float yForAnalyzerDb (float db) const noexcept;
 
     EditorContext& ctx;
     analysis::SpectrumAnalyzer preAnalyzer, postAnalyzer;
-    bool showPre = true, showPost = true;
+    bool showPre = true, showPost = true, showAnalysis = true;
     float rangeDb = 18.0f;
 
     juce::Rectangle<float> plot;

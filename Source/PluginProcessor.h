@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Analysis/AnalysisController.h"
 #include "Analysis/SpectrumAnalyzer.h"
 #include "DSP/EQEngine.h"
 #include "Parameters/Parameters.h"
@@ -16,8 +17,10 @@ struct EyraUIState
     bool showPreSpectrum = true;
     bool showPostSpectrum = true;
     float displayRangeDb = 18.0f; // +/- range of the EQ curve scale: 6, 12, 18, 30
-    int editorWidth = 1120;
-    int editorHeight = 680;
+    bool analysisPanelOpen = true;
+    bool showAnalysisOverlay = true;
+    int editorWidth = 1240;
+    int editorHeight = 720;
 };
 
 class EyraEQAudioProcessor final : public juce::AudioProcessor
@@ -58,6 +61,9 @@ public:
 
     eyra::analysis::AnalyzerFifo preFifo, postFifo;
 
+    /** Listen-then-analyse workflow (pre-EQ signal). */
+    eyra::analysis::AnalysisController analysis;
+
     eyra::state::EditHistory history;
     eyra::state::ABComparison ab;
     eyra::state::PresetManager presets;
@@ -75,6 +81,18 @@ public:
     eyra::dsp::EQEngine& getEngine() noexcept { return engine; }
 
 private:
+    /** Sends the pre-EQ signal to both the spectrum display and the analysis capture. */
+    struct TapFanout final : eyra::dsp::AudioTap
+    {
+        eyra::dsp::AudioTap* first = nullptr;
+        eyra::dsp::AudioTap* second = nullptr;
+        void pushSamples (const double* l, const double* r, int n) noexcept override
+        {
+            first->pushSamples (l, r, n);
+            second->pushSamples (l, r, n);
+        }
+    } preFanout;
+
     eyra::params::ParameterReader reader;
     eyra::dsp::EQEngine engine;
     std::atomic<double> engineSampleRate { 48000.0 };

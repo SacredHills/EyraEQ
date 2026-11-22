@@ -19,7 +19,7 @@ class AnalyzerFifo final : public dsp::AudioTap
 public:
     static constexpr int kCapacity = 1 << 16;
 
-    AnalyzerFifo();
+    explicit AnalyzerFifo (int capacity = kCapacity);
 
     void pushSamples (const double* left, const double* right, int numSamples) noexcept override;
 
@@ -32,8 +32,14 @@ public:
     std::atomic<double> sampleRate { 44100.0 };
 
 private:
-    juce::AbstractFifo fifo { kCapacity };
+    juce::AbstractFifo fifo;
     std::vector<float> buffer;
+
+public:
+    /** When false, pushSamples() returns immediately (used by the analysis capture). */
+    std::atomic<bool> enabled { true };
+    int getCapacity() const noexcept { return (int) buffer.size(); }
+    void reset() noexcept { fifo.reset(); }
 };
 
 struct AnalyzerSettings

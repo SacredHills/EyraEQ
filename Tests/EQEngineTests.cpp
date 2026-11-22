@@ -353,7 +353,8 @@ public:
             const double realtimeFactor = audioSeconds / seconds;
             logMessage ("processed " + juce::String (audioSeconds, 1) + " s in " + juce::String (seconds * 1000.0, 1)
                         + " ms (" + juce::String (juce::roundToInt (realtimeFactor)) + "x real time, includes test signal generation)");
-            expectGreaterThan (realtimeFactor, 20.0);
+            if (kTimingAssertions)
+                expectGreaterThan (realtimeFactor, 20.0);
         }
 
         beginTest ("Silence after signal: no NaN / Inf, decays to zero");

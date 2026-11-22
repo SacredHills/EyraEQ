@@ -21,6 +21,8 @@ namespace
         t.setProperty ("showPre", s.showPreSpectrum, nullptr);
         t.setProperty ("showPost", s.showPostSpectrum, nullptr);
         t.setProperty ("range", s.displayRangeDb, nullptr);
+        t.setProperty ("analysisPanel", s.analysisPanelOpen, nullptr);
+        t.setProperty ("analysisOverlay", s.showAnalysisOverlay, nullptr);
         t.setProperty ("width", s.editorWidth, nullptr);
         t.setProperty ("height", s.editorHeight, nullptr);
         return t;
@@ -41,6 +43,8 @@ namespace
         s.showPreSpectrum = (bool) t.getProperty ("showPre", s.showPreSpectrum);
         s.showPostSpectrum = (bool) t.getProperty ("showPost", s.showPostSpectrum);
         s.displayRangeDb = (float) t.getProperty ("range", s.displayRangeDb);
+        s.analysisPanelOpen = (bool) t.getProperty ("analysisPanel", s.analysisPanelOpen);
+        s.showAnalysisOverlay = (bool) t.getProperty ("analysisOverlay", s.showAnalysisOverlay);
         s.editorWidth = (int) t.getProperty ("width", s.editorWidth);
         s.editorHeight = (int) t.getProperty ("height", s.editorHeight);
         return s;
@@ -57,7 +61,9 @@ EyraEQAudioProcessor::EyraEQAudioProcessor()
       presets (apvts, history),
       reader (apvts)
 {
-    engine.setTaps (&preFifo, &postFifo);
+    preFanout.first = &preFifo;
+    preFanout.second = &analysis.getTap();
+    engine.setTaps (&preFanout, &postFifo);
 }
 
 void EyraEQAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -65,6 +71,7 @@ void EyraEQAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     engineSampleRate = sampleRate;
     preFifo.sampleRate = sampleRate;
     postFifo.sampleRate = sampleRate;
+    analysis.prepare (sampleRate);
 
     // Push the current parameter values first so the bands start in their final state.
     for (int b = 0; b < eyra::params::kNumBands; ++b)

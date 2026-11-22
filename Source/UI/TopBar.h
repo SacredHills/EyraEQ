@@ -34,6 +34,7 @@ public:
     std::function<void()> onSavePresetRequested;
     std::function<void (const EyraUIState&)> onUIStateChanged;
     std::function<void (int width, int height)> onWindowSizeRequested;
+    std::function<void (bool open)> onAnalysisPanelToggled;
 
     void copySettingsToClipboard();
     void pasteSettingsFromClipboard();
@@ -51,6 +52,7 @@ private:
     IconButton undoButton { "Undo", IconButton::Icon::Undo };
     IconButton redoButton { "Redo", IconButton::Icon::Redo };
     juce::TextButton aButton { "A" }, bButton { "B" }, copyABButton;
+    juce::TextButton analysisButton { "Analysis" };
     IconButton editButton { "Edit", IconButton::Icon::More };
     IconButton bypassButton { "Bypass", IconButton::Icon::Power };
     IconButton settingsButton { "Settings", IconButton::Icon::Settings };

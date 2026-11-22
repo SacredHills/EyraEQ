@@ -1,6 +1,56 @@
-# Testing report: Phase 1
+# Testing report
 
-Date: 2026-11-21 · Commit: Phase 1 branch (`phase-1-functional-eq`)
+Phase 2 results are in the next section; Phase 1 results follow it.
+
+## Phase 2: audio analysis (2026-11-21, branch `phase-2-audio-analysis`)
+
+| Suite | Result |
+|---|---|
+| `EyraEQTests` (Release) | **372 checks passed, 0 failed** |
+| `EyraEQHostTest` (Release) | **29 passed, 0 failed** |
+| `EyraEQTests` under ASan + UBSan + LSan (Debug) | **370 passed, 0 failed** (the 2 speed checks are skipped in debug and sanitizer builds); no sanitizer errors, no leaks, no JUCE assertions |
+
+### Detection tests on synthetic signals with known answers
+
+| Signal | Expected | Result |
+|---|---|---|
+| Band-limited pink noise (30 Hz–18 kHz) | no findings, not pitched, not percussive | 0 findings |
+| + bell 1.7 kHz, +12 dB, Q 10, at 44.1 / 48 / 96 kHz | resonance within 2% | 1698 / 1714 / 1717 Hz, about 10 dB, Significant |
+| + bell 250 Hz, +6 dB, Q 1 | build-up named "mud" | "Low-mid buildup (mud)", 250 Hz, +4.0 dB |
+| + bell 3.5 kHz, +6 dB, Q 1.2 | build-up named "harshness" | Harshness, 3.17 kHz, +3.7 dB |
+| + 12 Hz sine | rumble | found; DC-offset signal gives DC, not rumble |
+| + 60 / 120 / 180 Hz | mains hum, harmonics not repeated as resonances | "Mains hum (60 Hz)" |
+| 196 Hz harmonic tone (25 harmonics) | pitch 196 Hz, no resonances, no build-up | pitch 196.0 Hz, 0 findings |
+| Same tone + formant bell 600 Hz, +7 dB | boxiness found | "Boxiness", 630 Hz, +4.5 dB |
+| Tom-like hits, 150–162 Hz gliding body | percussive, body not called mud | percussive, pitch 153 Hz, 0 findings |
+| Drum hits with 180 Hz body + 1.13 kHz overtone ringing 0.3 s | ringing at 1.13 kHz; body not ringing; no build-up | "Ringing at 1.13 kHz", 10× slower decay; nothing else |
+| Same hits without the overtone | no ringing, no resonance | 0 findings |
+| Bell 2.2 kHz +14 dB active 1.3 s of every 4 s | intermittent resonance | 2183 Hz, present in 39% |
+| 1 s of audio / silence / 1 s in 5 s of silence | insufficient / silent | as expected; active time measured 1.0 s |
+
+### Pipeline tests (through the plug-in)
+
+- Listen during playback, then automatic stop at 15 s of signal: resonance at 2.4 kHz found.
+- Stop & analyse refused below 2 s of signal and allowed after; cancel keeps the previous result; a
+  sample-rate change cancels listening; clear resets.
+- File analysis (24-bit WAV) finds the resonance; an unreadable file gives a clear message.
+- `processBlock` performs **zero heap allocations while listening** (all allocation functions
+  instrumented, with a self-check).
+
+### Performance
+
+- Analysis of 30 s of 48 kHz audio: about 0.9 s on one core (Release), on the worker thread.
+
+### Not yet tested (Phase 2)
+
+- Analysis has been tested on synthetic signals only, not yet on a library of real recordings.
+  Real-world tuning of thresholds (especially for dense mixes and polyphonic material) is still open.
+- The interactive panel (buttons, list clicks) is covered by rendering tests and code review, not by
+  automated UI interaction.
+
+## Phase 1: functional EQ
+
+Date: 2026-11-21 · Branch `phase-1-functional-eq`
 
 ## Environment
 
@@ -20,7 +70,7 @@ Date: 2026-11-21 · Commit: Phase 1 branch (`phase-1-functional-eq`)
 | Both suites under ASan + UBSan + LSan (Debug) | **All passed; no sanitizer errors, no leaks, no JUCE assertions** |
 | Standalone app launched under Xvfb | Runs and renders (no audio device in the test machine) |
 
-### Continuous integration (GitHub Actions, run 44966178176)
+### Continuous integration (GitHub Actions, run 44966178176, Phase 1)
 
 | Platform | Runner | Build | `ctest` (unit + VST3 host test) | pluginval, strictness 10 |
 |---|---|---|---|---|

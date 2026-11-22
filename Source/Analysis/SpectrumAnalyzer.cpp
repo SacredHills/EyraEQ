@@ -5,13 +5,16 @@
 namespace eyra::analysis
 {
 
-AnalyzerFifo::AnalyzerFifo()
+AnalyzerFifo::AnalyzerFifo (int capacity) : fifo (capacity)
 {
-    buffer.resize ((size_t) kCapacity, 0.0f);
+    buffer.resize ((size_t) capacity, 0.0f);
 }
 
 void AnalyzerFifo::pushSamples (const double* left, const double* right, int numSamples) noexcept
 {
+    if (! enabled.load (std::memory_order_relaxed))
+        return;
+
     int start1, size1, start2, size2;
     fifo.prepareToWrite (numSamples, start1, size1, start2, size2);
 
@@ -45,7 +48,7 @@ SpectrumAnalyzer::SpectrumAnalyzer (AnalyzerFifo& source) : fifo (source)
 {
     levels.assign ((size_t) kNumPoints, kFloorDb);
     powerAverage.assign ((size_t) kNumPoints, 0.0f);
-    pullBuffer.resize ((size_t) AnalyzerFifo::kCapacity);
+    pullBuffer.resize ((size_t) source.getCapacity());
     configure();
 }
 

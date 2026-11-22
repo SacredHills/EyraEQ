@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 #include "TestHelpers.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <new>
@@ -23,12 +24,42 @@ void* countedAlloc (std::size_t size)
 }
 } // namespace
 
+namespace
+{
+void* countedAlignedAlloc (std::size_t size, std::align_val_t al)
+{
+    if (countingAllocations)
+        allocationCount.fetch_add (1, std::memory_order_relaxed);
+    const auto alignment = std::max<std::size_t> ((std::size_t) al, sizeof (void*));
+    const auto rounded = (size + alignment - 1) / alignment * alignment;
+    if (void* p = std::aligned_alloc (alignment, rounded == 0 ? alignment : rounded))
+        return p;
+    throw std::bad_alloc();
+}
+} // namespace
+
+// Every replaceable allocation function is replaced, so the counter sees all allocations and every
+// allocation is released by the matching function (sanitizers check this).
 void* operator new (std::size_t size) { return countedAlloc (size); }
 void* operator new[] (std::size_t size) { return countedAlloc (size); }
+void* operator new (std::size_t size, const std::nothrow_t&) noexcept { try { return countedAlloc (size); } catch (...) { return nullptr; } }
+void* operator new[] (std::size_t size, const std::nothrow_t&) noexcept { try { return countedAlloc (size); } catch (...) { return nullptr; } }
+void* operator new (std::size_t size, std::align_val_t al) { return countedAlignedAlloc (size, al); }
+void* operator new[] (std::size_t size, std::align_val_t al) { return countedAlignedAlloc (size, al); }
+void* operator new (std::size_t size, std::align_val_t al, const std::nothrow_t&) noexcept { try { return countedAlignedAlloc (size, al); } catch (...) { return nullptr; } }
+void* operator new[] (std::size_t size, std::align_val_t al, const std::nothrow_t&) noexcept { try { return countedAlignedAlloc (size, al); } catch (...) { return nullptr; } }
 void operator delete (void* p) noexcept { std::free (p); }
 void operator delete[] (void* p) noexcept { std::free (p); }
 void operator delete (void* p, std::size_t) noexcept { std::free (p); }
 void operator delete[] (void* p, std::size_t) noexcept { std::free (p); }
+void operator delete (void* p, const std::nothrow_t&) noexcept { std::free (p); }
+void operator delete[] (void* p, const std::nothrow_t&) noexcept { std::free (p); }
+void operator delete (void* p, std::align_val_t) noexcept { std::free (p); }
+void operator delete[] (void* p, std::align_val_t) noexcept { std::free (p); }
+void operator delete (void* p, std::size_t, std::align_val_t) noexcept { std::free (p); }
+void operator delete[] (void* p, std::size_t, std::align_val_t) noexcept { std::free (p); }
+void operator delete (void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free (p); }
+void operator delete[] (void* p, std::align_val_t, const std::nothrow_t&) noexcept { std::free (p); }
 
 namespace
 {
@@ -51,7 +82,7 @@ public:
             expectGreaterOrEqual (allocationCount.load(), 2);
         }
 
-        beginTest ("processBlock allocates nothing, including during parameter changes");
+        beginTest ("processBlock allocates nothing, including during parameter changes and analysis listening");
 
         EyraEQAudioProcessor p;
         p.setPlayConfigDetails (2, 2, 48000.0, 512);
@@ -66,6 +97,12 @@ public:
         auto* type = p.apvts.getParameter (bandParamID (2, BandField::Type));
         auto* used = p.apvts.getParameter (bandParamID (10, BandField::Used));
         auto* place = p.apvts.getParameter (bandParamID (1, BandField::Placement));
+
+        // Listening for analysis must not change the audio thread's behaviour either.
+        p.analysis.startListening();
+        for (int i = 0; i < 200 && p.analysis.getState() != eyra::analysis::AnalysisController::State::Listening; ++i)
+            juce::Thread::sleep (5);
+        expect (p.analysis.getState() == eyra::analysis::AnalysisController::State::Listening);
 
         allocationCount = 0;
         for (int blk = 0; blk < 400; ++blk)

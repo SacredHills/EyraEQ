@@ -6,6 +6,7 @@ namespace
 {
     constexpr int kTopBarHeight = 46;
     constexpr int kBandPanelHeight = 132;
+    constexpr int kAnalysisPanelWidth = 300;
     constexpr int kMinWidth = 860, kMinHeight = 520;
     constexpr int kMaxWidth = 3200, kMaxHeight = 2000;
 } // namespace
@@ -80,7 +81,7 @@ void SavePresetOverlay::resized()
 
 //==============================================================================
 EyraEQAudioProcessorEditor::EyraEQAudioProcessorEditor (EyraEQAudioProcessor& p)
-    : AudioProcessorEditor (&p), processorRef (p), context (p), topBar (context), display (context), bandPanel (context)
+    : AudioProcessorEditor (&p), processorRef (p), context (p), topBar (context), display (context), bandPanel (context), analysisPanel (context)
 {
     setLookAndFeel (&lookAndFeel);
     setWantsKeyboardFocus (true);
@@ -88,11 +89,18 @@ EyraEQAudioProcessorEditor::EyraEQAudioProcessorEditor (EyraEQAudioProcessor& p)
     addAndMakeVisible (topBar);
     addAndMakeVisible (display);
     addAndMakeVisible (bandPanel);
+    addChildComponent (analysisPanel);
+    analysisPanel.setVisible (p.getUIState().analysisPanelOpen);
     addChildComponent (saveOverlay);
 
     topBar.onSavePresetRequested = [this] { saveOverlay.show (processorRef.presets.getCurrentPresetName()); };
     topBar.onUIStateChanged = [this] (const EyraUIState& s) { display.applyUIState (s); };
     topBar.onWindowSizeRequested = [this] (int w, int h) { setSize (w, h); };
+    topBar.onAnalysisPanelToggled = [this] (bool open)
+    {
+        analysisPanel.setVisible (open);
+        resized();
+    };
     saveOverlay.onSave = [this] (const juce::String& name) { processorRef.presets.saveUserPreset (name); };
 
     const auto ui = processorRef.getUIState();
@@ -120,6 +128,8 @@ void EyraEQAudioProcessorEditor::resized()
     auto area = getLocalBounds();
     topBar.setBounds (area.removeFromTop (kTopBarHeight));
     bandPanel.setBounds (area.removeFromBottom (kBandPanelHeight));
+    if (analysisPanel.isVisible())
+        analysisPanel.setBounds (area.removeFromRight (kAnalysisPanelWidth));
     display.setBounds (area);
     saveOverlay.setBounds (getLocalBounds());
 
@@ -141,6 +151,7 @@ void EyraEQAudioProcessorEditor::timerCallback()
         slowCounter = 0;
         topBar.refresh();
         bandPanel.refresh();
+        analysisPanel.refresh();
     }
 }
 
