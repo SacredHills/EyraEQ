@@ -225,7 +225,7 @@ public:
         {
             const auto& dc = t.decision;
             const SoundFeatures none;
-            const double high = std::max (dc.highConfidenceScore, dc.familyConfidentScore) + 0.1;
+            const double high = std::max ({ dc.highConfidenceScore, dc.familyConfidentScore, dc.memberConfidentScore }) + 0.1;
             auto e = evidence (t, { { "keys", high } }, { { "piano", high }, { "organ", high / (dc.highDominanceRatio + 0.5) } });
             auto d = InstrumentClassifier::decide (t, e.families, e.categories, 0.0, 10.0, none);
             expect (d.status == S::Detected);
@@ -245,11 +245,14 @@ public:
             expectGreaterOrEqual ((int) d.candidates.size(), 2);
             expect (d.message.contains ("keys"), d.message);
 
-            // A family with a single member needs no member dominance.
-            e = evidence (t, { { "vocal", high } }, { { "vocal", dc.presentScore } });
+            // A single-member family still needs its member to stand out from every other category.
+            e = evidence (t, { { "vocal", high } }, { { "vocal", high } });
             d = InstrumentClassifier::decide (t, e.families, e.categories, 0.0, 10.0, none);
             expect (d.status == S::Detected);
             expect (d.instrument() == Instrument::Vocal);
+            e = evidence (t, { { "vocal", high } }, { { "vocal", high }, { "synth", high * 0.9 } });
+            d = InstrumentClassifier::decide (t, e.families, e.categories, 0.0, 10.0, none);
+            expect (d.status == S::Ambiguous, "strong evidence for another instrument means doubt");
         }
 
         beginTest ("Drums: the family comes from the model, the piece from the sound");
@@ -285,9 +288,17 @@ public:
             expect (d.candidates.size() == 1 && d.candidates[0].instrument == Instrument::Drums);
 
             // The model's own hand-percussion classes win over the kit rules.
-            const double perc = t.drumRules.modelPercussionScore + 0.1;
+            const double perc = std::max (t.drumRules.modelPercussionScore, t.decision.memberConfidentScore) + 0.1;
             e = evidence (t, { { "drums", 0.6 } }, { { "percussion", perc } });
             expect (piece (snareFeatures()).instrument() == Instrument::Percussion);
+
+            // Without measured regular hits the piece is only a possibility.
+            e = evidence (t, { { "drums", 0.6 } });
+            auto sustained = kickFeatures();
+            sustained.percussive = false;
+            d = piece (sustained);
+            expect (d.status == S::Ambiguous);
+            expect (d.candidates.size() == 1 && d.candidates[0].instrument == Instrument::KickDrum);
 
             // When the model also names the piece, confidence rises.
             e = evidence (t, { { "drums", 0.9 } }, { { "cymbals", 0.8 } });
@@ -328,7 +339,7 @@ public:
                 return InstrumentClassifier::decide (t, e.families, e.categories, distortion, 10.0, f);
             };
 
-            auto vocal = evidence (t, { { "vocal", 0.6 } }, { { "vocal", 0.6 } });
+            auto vocal = evidence (t, { { "vocal", 0.8 } }, { { "vocal", 0.8 } });
             expect (run (vocal, 0, withPitch (pitchAt (120, 95, 180))).instrument() == Instrument::MaleVocal);
             expect (run (vocal, 0, withPitch (pitchAt (330, 240, 520))).instrument() == Instrument::FemaleVocal);
             auto unsure = run (vocal, 0, withPitch (pitchAt (200, 150, 300)));
@@ -336,12 +347,12 @@ public:
             expect (unsure.candidates.front().note.isNotEmpty());
             expect (run (vocal, 0, none).instrument() == Instrument::Vocal);
 
-            auto guitar = evidence (t, { { "guitar", 0.6 } }, { { "electric_guitar", 0.6 } });
+            auto guitar = evidence (t, { { "guitar", 0.8 } }, { { "electric_guitar", 0.8 } });
             expect (run (guitar, 0.4, none).instrument() == Instrument::DistortedGuitar);
             expect (run (guitar, 0.01, none).instrument() == Instrument::CleanGuitar);
             expect (run (guitar, 0.12, none).instrument() == Instrument::ElectricGuitar);
 
-            auto synth = evidence (t, { { "keys", 0.6 } }, { { "synth", 0.6 } });
+            auto synth = evidence (t, { { "keys", 0.8 } }, { { "synth", 0.8 } });
             expect (run (synth, 0, withPitch (pitchAt (55, 41, 82))).instrument() == Instrument::SynthBass);
             expect (run (synth, 0, withPitch (pitchAt (440, 300, 600))).instrument() == Instrument::Synthesizer);
         }

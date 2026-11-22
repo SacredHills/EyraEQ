@@ -678,21 +678,31 @@ InstrumentDetection InstrumentClassifier::decide (const Taxonomy& t, const std::
     const bool strongFamily = fb >= dc.highConfidenceScore && fb >= dc.highDominanceRatio * std::max (fs, 1.0e-9);
     const auto members = membersOf (bestFamily);
     const double mb = categoryEvidence[(size_t) members[0]];
-    const double ms = members.size() > 1 ? categoryEvidence[(size_t) members[1]] : 0.0;
-    const bool memberLeads = members.size() == 1
-                          || (mb >= dc.memberConfidentScore && mb >= dc.memberDominanceRatio * std::max (ms, 1.0e-9));
+    // Runner-up: the next member, or the strongest category of any other family (strong evidence
+    // elsewhere is a reason for doubt).
+    auto strongestOutside = [&] (int family)
+    {
+        double v = 0.0;
+        for (size_t i = 0; i < t.categories.size(); ++i)
+            if (t.categories[i].family != family)
+                v = std::max (v, categoryEvidence[i]);
+        return v;
+    };
+    const double ms = std::max (members.size() > 1 ? categoryEvidence[(size_t) members[1]] : 0.0, strongestOutside (bestFamily));
+    const bool memberLeads = mb >= dc.memberConfidentScore && mb >= dc.memberDominanceRatio * std::max (ms, 1.0e-9);
 
     // --- Stage 2a: drums: the piece comes from the sound -------------------------------
     if (bestFamily == drums)
     {
         // Hand percussion and mallets are better recognised by the model than by the drum rules.
+        // They are held to the same thresholds as other instruments, against kit pieces and other families.
         const int perc = t.categoryIndex ("percussion");
-        double kitPieces = 0.0;
+        double rival = strongestOutside (bestFamily);
         for (const char* id : { "kick", "snare", "toms" })
             if (const int i = t.categoryIndex (id); i >= 0)
-                kitPieces = std::max (kitPieces, categoryEvidence[(size_t) i]);
-        if (perc >= 0 && categoryEvidence[(size_t) perc] >= t.drumRules.modelPercussionScore
-            && categoryEvidence[(size_t) perc] >= 2.0 * std::max (kitPieces, 1.0e-9))
+                rival = std::max (rival, categoryEvidence[(size_t) i]);
+        if (perc >= 0 && categoryEvidence[(size_t) perc] >= std::max (t.drumRules.modelPercussionScore, dc.memberConfidentScore)
+            && categoryEvidence[(size_t) perc] >= dc.memberDominanceRatio * std::max (rival, 1.0e-9))
         {
             d.status = S::Detected;
             d.confidence = strongFamily ? C::High : C::Medium;
@@ -703,7 +713,8 @@ InstrumentDetection InstrumentClassifier::decide (const Taxonomy& t, const std::
         }
 
         const auto est = estimateDrumPiece (t.drumRules, f, rf.rackFloorTomSplitHz);
-        if (est.piece != Instrument::Unknown)
+        // A drum piece is only stated as detected when the analysis also measured regular hits.
+        if (est.piece != Instrument::Unknown && f.percussive)
         {
             InstrumentCandidate c;
             c.instrument = est.piece;
@@ -719,7 +730,7 @@ InstrumentDetection InstrumentClassifier::decide (const Taxonomy& t, const std::
         }
 
         d.status = S::Ambiguous;
-        for (auto inst : est.candidates)
+        for (auto inst : est.piece != Instrument::Unknown ? std::vector<Instrument> { est.piece } : est.candidates)
         {
             InstrumentCandidate c;
             c.instrument = inst;
@@ -736,7 +747,8 @@ InstrumentDetection InstrumentClassifier::decide (const Taxonomy& t, const std::
             c.score = fb;
             d.candidates.push_back (c);
         }
-        d.message = "Clearly drums, but the drum type is not certain" + (est.note.isNotEmpty() ? " (" + est.note + ")." : juce::String ("."));
+        d.message = ! f.percussive ? juce::String ("Sounds like drums, but no regular hits were measured to tell which drum.")
+                                   : "Clearly drums, but the drum type is not certain" + (est.note.isNotEmpty() ? " (" + est.note + ")." : juce::String ("."));
         return d;
     }
 
@@ -744,7 +756,7 @@ InstrumentDetection InstrumentClassifier::decide (const Taxonomy& t, const std::
     if (memberLeads)
     {
         d.status = S::Detected;
-        d.confidence = strongFamily && (members.size() == 1 || mb >= dc.highDominanceRatio * std::max (ms, 1.0e-9)) ? C::High : C::Medium;
+        d.confidence = strongFamily && mb >= dc.highConfidenceScore && mb >= dc.highDominanceRatio * std::max (ms, 1.0e-9) ? C::High : C::Medium;
         d.candidates.push_back (refine (members[0]));
         for (size_t i = 1; i < members.size() && (int) d.candidates.size() < dc.maxCandidates; ++i)
             if (categoryEvidence[(size_t) members[i]] >= dc.presentScore)

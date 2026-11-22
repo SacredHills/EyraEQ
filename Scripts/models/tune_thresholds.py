@@ -46,12 +46,19 @@ class Mirror:
                      if v >= d["presentScore"] and v >= d["candidateRatio"] * fb][: d["maxCandidates"]]
             return "ambiguous", cands
         if best == "drums":
+            # Hand percussion / mallets: the model's own classes, held to the member thresholds.
             perc = categories.get("percussion", 0.0)
-            kit = max(categories.get(c, 0.0) for c in ("kick", "snare", "toms"))
-            return "detected", ["percussion" if perc >= self.perc_score and perc >= 2.0 * max(kit, 1e-9) else "drums"]
+            rival = max([categories.get(c, 0.0) for c in ("kick", "snare", "toms")]
+                        + [v for c, v in categories.items() if self.family_of[c] != "drums"])
+            if perc >= max(self.perc_score, d["memberConfidentScore"]) and perc >= d["memberDominanceRatio"] * max(rival, 1e-9):
+                return "detected", ["percussion"]
+            # Kit pieces come from measurements and need measured regular hits, which single notes never have.
+            return "ambiguous", ["drums"]
         m = sorted_members(best)
-        mb, ms = categories[m[0]], (categories[m[1]] if len(m) > 1 else 0.0)
-        if len(m) == 1 or (mb >= d["memberConfidentScore"] and mb >= d["memberDominanceRatio"] * max(ms, 1e-9)):
+        mb = categories[m[0]]
+        # Runner-up: the next member, or any other family's category (as strong evidence elsewhere means doubt).
+        ms = max([categories[c] for c in m[1:]] + [v for c, v in categories.items() if self.family_of[c] != best] + [0.0])
+        if mb >= d["memberConfidentScore"] and mb >= d["memberDominanceRatio"] * max(ms, 1e-9):
             return "detected", [m[0]]
         return "ambiguous", [c for i, c in enumerate(m) if i == 0 or categories[c] >= d["candidateRatio"] * mb][: d["maxCandidates"]]
 
@@ -84,11 +91,11 @@ def main():
     test = json.loads((args.validation_dir / "nsynth-test-evidence.json").read_text())
 
     grid = {
-        "presentScore": [0.08, 0.10, 0.12, 0.15, 0.20],
+        "presentScore": [0.08, 0.12, 0.15, 0.20],
         "familyConfidentScore": [0.20, 0.25, 0.30, 0.40, 0.50],
         "familyDominanceRatio": [1.2, 1.6, 2.0, 3.0, 4.0],
-        "memberConfidentScore": [0.10, 0.15, 0.20, 0.30, 0.40],
-        "memberDominanceRatio": [1.2, 1.5, 2.0, 3.0, 4.0],
+        "memberConfidentScore": [0.15, 0.20, 0.30, 0.40, 0.50, 0.60],
+        "memberDominanceRatio": [1.5, 2.0, 3.0, 4.0, 5.0, 6.0],
     }
     base = dict(tax["decision"])
     best = None

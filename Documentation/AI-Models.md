@@ -40,59 +40,108 @@ if the scores differ from the reference, the model is not used.
 
 ## From model scores to an instrument
 
-`Models/instrument_taxonomy.json` maps AudioSet classes to EyraEQ's categories with weights (for
-example *Snare drum* 1.0, *Rimshot* 0.9, *Drum roll* 0.6 for the snare category). The same file is
-read by the plug-in and by the validation scripts, so both use identical logic.
+`Models/instrument_taxonomy.json` maps AudioSet classes to EyraEQ's instrument **families** (drums,
+bass, guitar, vocal, keys, strings and brass, other acoustic) and **categories** within them (for
+example *Snare drum* 1.0, *Rimshot* 0.9 for the snare). Generic labels such as *Percussion*, *Guitar*
+or *Keyboard* count towards a family only. The same file is read by the plug-in and by the validation
+scripts (`Scripts/models/taxonomy.py` mirrors the decision).
 
 1. Resample to 16 kHz (anti-aliased), compute log-mel patches (0.96 s every 0.48 s).
 2. Keep patches above -60 dBFS and within 40 dB of the loudest one.
-3. Category evidence = mean over patches of the strongest weighted class score.
-4. Decision (thresholds in the taxonomy file):
+3. Evidence = mean over patches of the strongest weighted class score, per family and per category.
+   Generic impact sounds (*Knock*, *Thump*, *Whack*, *Tap*) count towards drums only when the analysis
+   measured regular hits.
+4. **Family stage** (thresholds in the taxonomy file):
    - under 3 s of signal: **more audio needed**
-   - best evidence under `presentScore`: **not recognised**
-   - best at or above `confidentScore` *and* `dominanceRatio` times the runner-up: **detected**
-     (high or medium confidence)
-   - otherwise: **not certain**, with up to three plausible candidates
-5. Refinements the model cannot make, using the measured pitch from the frequency analysis. They are
-   labelled as such in the UI:
-   - male or female vocal: only when the pitch range is clearly in one range (YAMNet has no
-     gender classes); otherwise "Vocal"
-   - rack or floor tom: from the tom's pitch (split at 110 Hz)
-   - synth bass: synthesizer with a median pitch below 140 Hz
-   - clean or distorted electric guitar: from YAMNet's *Distortion* class
+   - best family under `presentScore`: **not recognised** (but see the drum fallback below)
+   - best family under `familyConfidentScore`, or less than `familyDominanceRatio` times the
+     runner-up: **not certain**, with the likeliest instrument of each plausible family
+5. **Instrument stage**:
+   - pitched families: the best category must reach `memberConfidentScore` and be
+     `memberDominanceRatio` times both the next member and the strongest category of any other
+     family; otherwise **not certain** among the members.
+   - drums: see below.
+6. Refinements the model cannot make, from the measured pitch and YAMNet's *Distortion* class,
+   labelled as such in the UI: male/female vocal (only when the pitch range is clearly one or the
+   other; YAMNet has no gender classes), synth bass (synthesizer below 140 Hz median pitch), clean or
+   distorted electric guitar.
 
-### Calibration and measured accuracy
+### Drums
+
+YAMNet recognises drum kits and cymbals well, but heard alone, a kick is often "Knock" or "Door" and
+a snare "Sound effect"; it has no tom classes. So the model decides *that* it is drums, and the
+frequency analysis decides *which* drum, from measurements shown with the result:
+
+| Measurement | Decides |
+|---|---|
+| ≥ 40% of energy above 5 kHz, or a centroid above 2.5 kHz with < 5% below 150 Hz | cymbals / hi-hat |
+| ≥ 20% below 150 Hz **and** ≥ 20% above 5 kHz | full kit (overheads) |
+| ≥ 50% below 150 Hz | kick (decay < 220 ms) or floor tom (longer) |
+| otherwise | snare (noisy: spectral flatness ≥ 0.1) or tom (tonal; rack/floor by pitch, 110 Hz) |
+
+- Values within 25% of the decay threshold or 35% of the noisiness threshold give **both**
+  possibilities instead of a guess.
+- A piece is only stated as detected when the analysis also measured regular hits; it is medium
+  confidence, high only when the model independently names the same piece (e.g. *Hi-hat*).
+- The model's hand-percussion and mallet classes (wood block, marimba, ...) give "Percussion" when
+  they clearly win, under the same thresholds as other instruments.
+- If the model recognises nothing at all but regular hits were measured and the measurements point
+  clearly to a drum, it is offered as **possibly** that drum ("from the measurements only"), never as
+  a detection.
+
+Measured on 30 drum-machine and sampled-kit one-shots (5 kits × kick, snare, hi-hat, 3 toms; looped
+every 0.5 s for 8 s) with `EyraEQAnalyze`, the plug-in's own pipeline:
+
+| 30 drum loops | Result |
+|---|---|
+| Detected | 14, all correct |
+| Not certain, right drum among the possibilities | 15 (8 of them from the measurements only) |
+| Not certain, "Drums" without a piece | 1 |
+| Wrong | 0 |
+
+**Caveat:** these samples were also used to choose the thresholds, and they cannot be redistributed
+(no licence), so they are not in the repository. This shows the method works, not its accuracy on
+your recordings. The rules are also tested in CI on synthetic drums through the real analysis.
+Mixed drum buses or bleed-heavy close mics are not measured.
+
+### Calibration and measured accuracy (pitched instruments)
 
 Thresholds are tuned on NSynth's **valid** split (`Scripts/models/tune_thresholds.py`) for at least
 90% precision of "detected", then reported once on the **test** split. Full table:
 [Validation/nsynth-validation.md](Validation/nsynth-validation.md).
 
-| NSynth test split, 1,177 single notes | Result |
-|---|---|
-| Correct when "detected" | **92%** |
-| Detected with confidence | 7% |
-| "Not certain" (candidate list contains the right instrument) | 61% (49%) |
-| Not recognised | 32% |
-| Top-ranked category correct (not shown to users as a fact) | 36% |
+| NSynth, single notes | Valid split | Test split |
+|---|---|---|
+| Correct when "detected" | 92% | **84%** (44 notes) |
+| Detected with confidence | 5% | 4% |
+| "Not certain" (right instrument among candidates) | 58% (46%) | 59% (43%) |
+| Not recognised | 37% | 38% |
 
-What this means: when EyraEQ says it has detected an instrument, it is usually right. But on
-isolated single notes it rarely commits, and offers candidates instead. YAMNet is strongest on flute,
-brass, vocals and electric bass, and weak on piano, organ and acoustic guitar notes (often heard as
-percussion or electric guitar). Real performances are longer and richer than single notes, but that
-has **not been measured yet**.
+What this means: when EyraEQ says it has detected a pitched instrument it is usually, not always,
+right; on isolated single notes it mostly offers candidates instead. The precision on the test split
+is lower than on the split the thresholds were tuned on, and with 44 detections it is only a rough
+figure. YAMNet is strongest on flute, brass, vocals and synth bass, and weak on piano, organ and
+guitar notes (often heard as synthesizer or percussion). Real performances are longer and richer than
+single notes, but that has **not been measured yet**.
 
 ### Not yet validated
 
-- **Drums** (kick, snare, toms, cymbals, overheads): NSynth has no drums, and suitable openly
-  licensed multitrack drum datasets are either non-commercial or very large. The drum categories map
-  directly to AudioSet classes, but their accuracy is unmeasured.
-- **Vocal gender** and **rack / floor tom** refinements are rule-based on pitch and unvalidated on real
-  recordings.
-- **Real multitrack stems** in general.
+- **Real multitrack stems** in general, including vocal gender.
+- **Drums** beyond the 30 local samples above.
 
 Improving this is the main open item. The next step would be a small classifier head trained on YAMNet
 embeddings with an openly licensed stem dataset; the training and evaluation pipeline above is
 designed so that such a model drops in as an update.
+
+### Checking your own audio
+
+`EyraEQAnalyze` (built with the tests) prints what the plug-in would show for audio files, with the
+measurements and the model's top classes:
+
+```
+EYRA_ONNXRUNTIME_LIBRARY=/path/to/libonnxruntime.so EYRA_MODEL_DIR=Models \
+  build/linux-release/EyraEQAnalyze_artefacts/Release/EyraEQAnalyze kick.wav snare.wav
+```
 
 ## Model updates
 

@@ -4,6 +4,21 @@ Newest phase first.
 
 ## Phase 3: instrument recognition (2026-11-21, branch `phase-3-instrument-recognition`)
 
+### Update: drum recognition fix (2026-11-22)
+
+Drums were not recognised (the model hears lone kicks as "Knock", snares as "Sound effect"; sparse
+hits produced an empty long-term spectrum). Recognition is now two-stage: the model picks the family,
+measurements pick the drum (see [AI-Models](AI-Models.md#drums)).
+
+| Check | Result |
+|---|---|
+| `EyraEQTests`, Release and ASan/UBSan/LSan Debug, with the model | **464 checks passed, 0 failed**, no sanitizer errors |
+| 30 local drum loops through `EyraEQAnalyze` (in-sample, not redistributable) | 14 detected, all correct; 15 "possibly" incl. the right drum; 1 "Drums"; 0 wrong |
+| Synthetic kick / floor tom / rack tom / snare / hi-hat through the real analysis (CI) | all identified |
+| NSynth pitched notes, retuned (valid → test) | 92% → **84%** correct when detected (44 test notes), 4% detected |
+
+The figures below are from before this update.
+
 | Suite | Result |
 |---|---|
 | `EyraEQTests` (Release, with ONNX Runtime 1.32.0 and the model) | **425 checks passed, 0 failed** |

@@ -3,15 +3,16 @@
   "description": "Maps classifier labels (AudioSet class names, as used by YAMNet) to EyraEQ instrument families and categories. Read by the plug-in and by Scripts/models/*.py, so both use identical logic. Generic labels (Percussion, Guitar, Keyboard) count towards a family only; categories use specific labels. Within drums the piece is decided by measurements (drumRules); drum category scores only serve as a hint, and generic Drum counts towards toms so that hand-percussion classes do not override tonal drums. percussiveClasses (generic impact sounds) count only when the analysis measured regular hits.",
   "decision": {
     "minActiveSeconds": 3.0,
-    "presentScore": 0.12,
-    "familyConfidentScore": 0.25,
-    "familyDominanceRatio": 1.6,
-    "memberConfidentScore": 0.2,
-    "memberDominanceRatio": 2.0,
-    "highConfidenceScore": 0.5,
+    "presentScore": 0.08,
+    "familyConfidentScore": 0.2,
+    "familyDominanceRatio": 2.0,
+    "memberConfidentScore": 0.6,
+    "memberDominanceRatio": 1.5,
+    "highConfidenceScore": 0.7,
     "highDominanceRatio": 3.0,
     "candidateRatio": 0.5,
-    "maxCandidates": 3
+    "maxCandidates": 3,
+    "calibration": "Family and member thresholds tuned on the NSynth valid split for >= 90% precision of 'Detected' (Scripts/models/tune_thresholds.py): valid 92%, test 84% correct when detected (44 of 1,177 test notes detected). Drum rules: see drumRules and Documentation/AI-Models.md."
   },
   "families": [
     { "id": "drums", "name": "Drums and percussion", "classes": { "Drum": 1.0, "Drum kit": 1.0, "Drum machine": 1.0, "Percussion": 0.9, "Bass drum": 1.0, "Snare drum": 1.0, "Rimshot": 1.0, "Drum roll": 1.0, "Timpani": 0.9, "Tabla": 0.9, "Cymbal": 1.0, "Hi-hat": 1.0, "Wood block": 1.0, "Tambourine": 1.0, "Maraca": 1.0, "Rattle (instrument)": 0.9, "Cowbell": 1.0, "Mallet percussion": 1.0, "Marimba, xylophone": 1.0, "Glockenspiel": 1.0, "Vibraphone": 1.0, "Steelpan": 1.0, "Tubular bells": 0.9, "Gong": 0.9 },

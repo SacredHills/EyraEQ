@@ -83,16 +83,20 @@ class Taxonomy:
             return "ambiguous", cands
 
         if best == "drums":
+            # Hand percussion / mallets: the model's own classes, held to the member thresholds.
             perc = categories.get("percussion", 0.0)
-            kit = max(categories.get(c, 0.0) for c in ("kick", "snare", "toms"))
-            if perc >= self.drum_rules.get("modelPercussionScore", 0.3) and perc >= 2.0 * max(kit, 1e-9):
+            rival = max([categories.get(c, 0.0) for c in ("kick", "snare", "toms")]
+                        + [v for c, v in categories.items() if self.family_of[c] != "drums"])
+            if perc >= max(self.drum_rules.get("modelPercussionScore", 0.3), d["memberConfidentScore"]) and perc >= d["memberDominanceRatio"] * max(rival, 1e-9):
                 return "detected", ["percussion"]
-            return "detected", ["drums"]
+            # Kit pieces come from measurements and need measured regular hits, which single notes never have.
+            return "ambiguous", ["drums"]
 
         m = members(best)
         mb = categories[m[0]]
-        ms = categories[m[1]] if len(m) > 1 else 0.0
-        if len(m) == 1 or (mb >= d["memberConfidentScore"] and mb >= d["memberDominanceRatio"] * max(ms, 1e-9)):
+        # Runner-up: the next member, or any other family's category (as strong evidence elsewhere means doubt).
+        ms = max([categories[c] for c in m[1:]] + [v for c, v in categories.items() if self.family_of[c] != best] + [0.0])
+        if mb >= d["memberConfidentScore"] and mb >= d["memberDominanceRatio"] * max(ms, 1e-9):
             return "detected", [m[0]]
         cands = [c for i, c in enumerate(m) if i == 0 or categories[c] >= d["candidateRatio"] * mb][: d["maxCandidates"]]
         return "ambiguous", cands
