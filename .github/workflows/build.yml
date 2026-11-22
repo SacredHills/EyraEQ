@@ -27,7 +27,7 @@ jobs:
             pluginval-zip: pluginval_Linux.zip
             pluginval-bin: ./pluginval
           - name: macOS Universal
-            os: macos-14
+            os: macos-latest
             preset: macos
             build-preset: macos-release
             test-preset: macos-release
