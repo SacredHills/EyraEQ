@@ -1,5 +1,6 @@
 # Model conversion and validation (CI only; not needed to build the plug-in)
 tensorflow-cpu==2.15.1
+tf_keras==2.15.1
 tf2onnx==1.16.1
 onnx==1.16.2
 onnxruntime==1.20.1

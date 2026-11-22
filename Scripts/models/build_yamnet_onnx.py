@@ -96,6 +96,7 @@ def main(out_dir: Path) -> None:
 
     sys.path.insert(0, str(work))
     import tensorflow as tf  # noqa: E402
+    import tf_keras  # noqa: E402  (the upstream YAMNet code uses the Keras 2 package)
     import params as yamnet_params  # noqa: E402
     import yamnet as yamnet_lib  # noqa: E402
 
@@ -108,9 +109,9 @@ def main(out_dir: Path) -> None:
     reference.load_weights(str(work / "yamnet.h5"))
 
     # Network only: log-mel patches -> (scores, embeddings)
-    patches_in = tf.keras.layers.Input(shape=(params.patch_frames, params.patch_bands), name="log_mel_patches")
+    patches_in = tf_keras.layers.Input(shape=(params.patch_frames, params.patch_bands), name="log_mel_patches")
     scores, embeddings = yamnet_lib.yamnet(patches_in, params)
-    net = tf.keras.Model(inputs=patches_in, outputs=[scores, embeddings], name="yamnet_patches")
+    net = tf_keras.Model(inputs=patches_in, outputs=[scores, embeddings], name="yamnet_patches")
     ref_layers = [l for l in reference.layers if l.weights]
     net_layers = [l for l in net.layers if l.weights]
     assert len(ref_layers) == len(net_layers), (len(ref_layers), len(net_layers))
