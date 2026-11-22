@@ -245,7 +245,8 @@ public:
 
             // Left alone, but still available to choose.
             s.strength = Strength::Gentle;
-            const auto* alone = forFinding (generateCorrections (r, s), 0);
+            const auto gentle = generateCorrections (r, s);
+            const auto* alone = forFinding (gentle, 0);
             expect (alone->optionalBand.has_value(), "a left-alone finding can still be applied");
             if (alone->optionalBand)
                 expect (alone->optionalBand->gainDb < 0.0 && std::abs (alone->optionalBand->frequency - 1000.0) < 1.0);
