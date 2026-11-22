@@ -1,7 +1,10 @@
-"""Python mirror of Source/Intelligence/InstrumentClassifier.cpp (category evidence and decision).
+"""Python mirror of Source/Intelligence/InstrumentClassifier.cpp (evidence and two-stage decision).
 
-Both read Models/instrument_taxonomy.json. Keep the two in sync; the C++ tests check the result for
-the reference waveform against the value this module writes into the validation report.
+Both read Models/instrument_taxonomy.json. Keep the two in sync.
+
+Not mirrored here: the drum-piece rules (they need the plug-in's audio measurements, which NSynth's
+single notes cannot exercise; they are tested in C++ on synthetic drums) and the pitch/distortion
+refinements. A drums-family result is reported as "drums" unless the model's hand-percussion classes win.
 """
 import json
 from pathlib import Path
@@ -9,20 +12,26 @@ from pathlib import Path
 import numpy as np
 
 
+def _pairs(classes, index, owner):
+    out = []
+    for name, weight in classes.items():
+        if name not in index:
+            raise ValueError(f"unknown class '{name}' in {owner}")
+        out.append((index[name], float(weight)))
+    return out
+
+
 class Taxonomy:
     def __init__(self, path: Path, labels):
         data = json.loads(Path(path).read_text())
         self.decision = data["decision"]
+        self.drum_rules = data.get("drumRules", {})
         self.refinements = data["refinements"]
         index = {name: i for i, name in enumerate(labels)}
-        self.categories = []
-        for c in data["categories"]:
-            pairs = []
-            for name, weight in c["classes"].items():
-                if name not in index:
-                    raise ValueError(f"unknown class '{name}' in category {c['id']}")
-                pairs.append((index[name], float(weight)))
-            self.categories.append((c["id"], c["name"], pairs))
+        self.families = [(f["id"], _pairs(f["classes"], index, f["id"]), _pairs(f.get("percussiveClasses", {}), index, f["id"]))
+                         for f in data["families"]]
+        self.categories = [(c["id"], c["family"], _pairs(c["classes"], index, c["id"])) for c in data["categories"]]
+        self.family_of = {cid: fam for cid, fam, _ in self.categories}
         self.distortion_index = index[self.refinements["distortionClass"]]
 
     def active_patches(self, waveform_16k, num_patches):
@@ -37,26 +46,62 @@ class Taxonomy:
         gate = max(-60.0, levels.max() - 40.0)
         return levels > gate
 
-    def evidence(self, scores, active):
-        """Mean over active patches of the strongest weighted class score per category."""
+    def evidence(self, scores, active, percussive=False):
+        """Mean over active patches of the strongest weighted class score, per family and per category."""
         s = scores[active]
-        out = {}
-        for cid, _, pairs in self.categories:
-            per_patch = np.max(np.stack([s[:, i] * w for i, w in pairs]), axis=0)
-            out[cid] = float(per_patch.mean()) if len(per_patch) else 0.0
-        distortion = float(s[:, self.distortion_index].mean()) if len(s) else 0.0
-        return out, distortion
 
-    def decide(self, evidence, active_seconds):
-        d = self.decision
+        def mean_max(pairs):
+            if not pairs or not len(s):
+                return 0.0
+            return float(np.max(np.stack([s[:, i] * w for i, w in pairs]), axis=0).mean())
+
+        families = {fid: mean_max(pairs + (perc if percussive else [])) for fid, pairs, perc in self.families}
+        categories = {cid: mean_max(pairs) for cid, _, pairs in self.categories}
+        distortion = float(s[:, self.distortion_index].mean()) if len(s) else 0.0
+        return families, categories, distortion
+
+    def decide(self, families, categories, active_seconds, d=None):
+        """Returns (status, candidates). Candidates are category ids, or "drums" for a drums-family result
+        whose piece the plug-in decides from measurements."""
+        d = d or self.decision
         if active_seconds < d["minActiveSeconds"]:
             return "need-more-audio", []
-        ranked = sorted(evidence.items(), key=lambda kv: -kv[1])
-        (best, b), (_, second) = ranked[0], ranked[1]
-        if b < d["presentScore"]:
+        ranked = sorted(families.items(), key=lambda kv: -kv[1])
+        (best, fb), fs = ranked[0], (ranked[1][1] if len(ranked) > 1 else 0.0)
+        if fb < d["presentScore"]:
             return "unknown", []
-        if b >= d["confidentScore"] and b >= d["dominanceRatio"] * max(second, 1e-9):
-            return "detected", [best]
-        candidates = [cid for cid, v in ranked[: d["maxCandidates"]]
-                      if v >= d["presentScore"] and v >= d["candidateRatio"] * b]
-        return "ambiguous", candidates
+
+        def members(fam):
+            return sorted([c for c, f in self.family_of.items() if f == fam], key=lambda c: -categories[c])
+
+        def representative(fam):
+            return "drums" if fam == "drums" else members(fam)[0]
+
+        if not (fb >= d["familyConfidentScore"] and fb >= d["familyDominanceRatio"] * max(fs, 1e-9)):
+            cands = [representative(f) for f, v in ranked
+                     if v >= d["presentScore"] and v >= d["candidateRatio"] * fb][: d["maxCandidates"]]
+            return "ambiguous", cands
+
+        if best == "drums":
+            perc = categories.get("percussion", 0.0)
+            kit = max(categories.get(c, 0.0) for c in ("kick", "snare", "toms"))
+            if perc >= self.drum_rules.get("modelPercussionScore", 0.3) and perc >= 2.0 * max(kit, 1e-9):
+                return "detected", ["percussion"]
+            return "detected", ["drums"]
+
+        m = members(best)
+        mb = categories[m[0]]
+        ms = categories[m[1]] if len(m) > 1 else 0.0
+        if len(m) == 1 or (mb >= d["memberConfidentScore"] and mb >= d["memberDominanceRatio"] * max(ms, 1e-9)):
+            return "detected", [m[0]]
+        cands = [c for i, c in enumerate(m) if i == 0 or categories[c] >= d["candidateRatio"] * mb][: d["maxCandidates"]]
+        return "ambiguous", cands
+
+
+KIT_PIECES = {"kick", "snare", "toms", "cymbals", "overheads"}
+
+
+def matches(expected, candidate):
+    """A drums-family result counts as correct for an expected kit piece only (the piece itself comes from
+    measurements, not covered here); hand percussion and mallets must be recognised as "percussion"."""
+    return candidate == expected or (candidate == "drums" and expected in KIT_PIECES)

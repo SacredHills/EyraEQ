@@ -44,10 +44,12 @@ Taxonomy loadTaxonomyWithoutModel (juce::StringArray& labels)
 {
     const auto json = juce::JSON::parse (modelsRoot().getChildFile ("instrument_taxonomy.json"));
     labels.clear();
-    for (const auto& c : *json.getProperty ("categories", {}).getArray())
-        if (auto* obj = c.getProperty ("classes", {}).getDynamicObject())
-            for (const auto& p : obj->getProperties())
-                labels.addIfNotAlreadyThere (p.name.toString());
+    for (const char* key : { "families", "categories" })
+        for (const auto& c : *json.getProperty (key, {}).getArray())
+            for (const char* classes : { "classes", "percussiveClasses" })
+                if (auto* obj = c.getProperty (classes, {}).getDynamicObject())
+                    for (const auto& p : obj->getProperties())
+                        labels.addIfNotAlreadyThere (p.name.toString());
     labels.add ("Distortion");
     Taxonomy t;
     juce::String error;
@@ -57,21 +59,51 @@ Taxonomy loadTaxonomyWithoutModel (juce::StringArray& labels)
     return t;
 }
 
-int categoryIndex (const Taxonomy& t, const juce::String& id)
+std::vector<double> evidenceWith (const std::vector<Taxonomy::Group>& groups, double rest,
+                                  std::initializer_list<std::pair<const char*, double>> values)
 {
-    for (size_t i = 0; i < t.categories.size(); ++i)
-        if (t.categories[i].id == id)
-            return (int) i;
-    return -1;
-}
-
-std::vector<double> evidenceWith (const Taxonomy& t, std::initializer_list<std::pair<const char*, double>> values)
-{
-    std::vector<double> e (t.categories.size(), t.decision.presentScore * 0.2);
+    std::vector<double> e (groups.size(), rest);
     for (auto [id, v] : values)
-        e[(size_t) categoryIndex (t, id)] = v;
+        for (size_t i = 0; i < groups.size(); ++i)
+            if (groups[i].id == id)
+                e[i] = v;
     return e;
 }
+
+/** Evidence for one family (and its members), everything else faint. */
+struct Evidence
+{
+    std::vector<double> families, categories;
+};
+
+Evidence evidence (const Taxonomy& t, std::initializer_list<std::pair<const char*, double>> fam,
+                   std::initializer_list<std::pair<const char*, double>> cat = {})
+{
+    const double faint = t.decision.presentScore * 0.2;
+    return { evidenceWith (t.families, faint, fam), evidenceWith (t.categories, faint, cat) };
+}
+
+/** Measurements typical of each drum (from analysing real one-shots: see Documentation/AI-Models.md). */
+SoundFeatures drumFeatures (double low, double lowMid, double mid, double high, double centroid, double flatness, double decay)
+{
+    SoundFeatures f;
+    f.lowShare = low;
+    f.lowMidShare = lowMid;
+    f.midShare = mid;
+    f.highShare = high;
+    f.centroidHz = centroid;
+    f.flatness = flatness;
+    f.decaySeconds = decay;
+    f.percussive = true;
+    return f;
+}
+
+SoundFeatures kickFeatures()     { return drumFeatures (0.92, 0.06, 0.015, 0.005, 120, 0.02, 0.12); }
+SoundFeatures floorTomFeatures() { return drumFeatures (0.80, 0.17, 0.02, 0.01, 180, 0.02, 0.38); }
+SoundFeatures snareFeatures()    { return drumFeatures (0.08, 0.55, 0.30, 0.07, 1500, 0.22, 0.15); }
+SoundFeatures rackTomFeatures()  { return drumFeatures (0.25, 0.70, 0.04, 0.01, 350, 0.03, 0.30); }
+SoundFeatures hiHatFeatures()    { return drumFeatures (0.00, 0.02, 0.28, 0.70, 7500, 0.40, 0.08); }
+SoundFeatures kitFeatures()      { return drumFeatures (0.35, 0.25, 0.15, 0.25, 2400, 0.20, 0.15); }
 
 PitchSummary pitchAt (double median, double low, double high)
 {
@@ -82,6 +114,54 @@ PitchSummary pitchAt (double median, double low, double high)
     p.lowHz = low;
     p.highHz = high;
     return p;
+}
+
+
+/** Synthetic one-shot drums repeated every half second for 8 s (no samples needed). */
+std::vector<float> drumLoop (const char* piece, double sr = 48000.0)
+{
+    juce::Random rng (1234);
+    const int hit = (int) (0.5 * sr), n = (int) (8.0 * sr);
+    std::vector<float> one ((size_t) hit, 0.0f);
+    double phase = 0.0, lp = 0.0, prev = 0.0;
+    for (int i = 0; i < hit; ++i)
+    {
+        const double t = i / sr;
+        const double noise = rng.nextFloat() * 2.0 - 1.0;
+        double v = 0.0;
+        if (juce::String (piece) == "kick")          // pitch-dropping sine, short decay
+        {
+            phase += juce::MathConstants<double>::twoPi * (50.0 + 90.0 * std::exp (-t / 0.02)) / sr;
+            v = std::sin (phase) * std::exp (-t / 0.045);
+        }
+        else if (juce::String (piece) == "floortom") // low sine, long decay
+        {
+            phase += juce::MathConstants<double>::twoPi * (85.0 + 20.0 * std::exp (-t / 0.03)) / sr;
+            v = std::sin (phase) * std::exp (-t / 0.16);
+        }
+        else if (juce::String (piece) == "racktom")  // mid sine, medium decay
+        {
+            phase += juce::MathConstants<double>::twoPi * (190.0 + 30.0 * std::exp (-t / 0.03)) / sr;
+            v = std::sin (phase) * std::exp (-t / 0.12);
+        }
+        else if (juce::String (piece) == "snare")    // body + band-limited wire noise
+        {
+            phase += juce::MathConstants<double>::twoPi * 200.0 / sr;
+            lp += 0.35 * (noise - lp);
+            v = 0.5 * std::sin (phase) * std::exp (-t / 0.04) + 0.9 * lp * std::exp (-t / 0.07);
+        }
+        else                                         // hi-hat: high-passed noise, very short
+        {
+            v = (noise - prev) * std::exp (-t / 0.025);
+            prev = noise;
+        }
+        one[(size_t) i] = (float) (0.5 * v);
+    }
+    std::vector<float> loop ((size_t) n, 0.0f);
+    for (int s = 0; s < n; s += hit)
+        for (int i = 0; i < hit && s + i < n; ++i)
+            loop[(size_t) (s + i)] = one[(size_t) i];
+    return loop;
 }
 
 void writeFile (const juce::File& f, const juce::String& text) { f.replaceWithText (text); }
@@ -96,7 +176,7 @@ public:
         using S = InstrumentDetection::Status;
         juce::StringArray labels;
         const auto t = loadTaxonomyWithoutModel (labels);
-        const PitchSummary noPitch;
+        const eyra::analysis::AnalysisResult noAnalysis {};
 
         beginTest ("Taxonomy loads and rejects invalid definitions");
         {
@@ -107,66 +187,181 @@ public:
 
             Taxonomy bad;
             juce::String error;
-            auto json = juce::JSON::parse (R"({"categories":[{"id":"kick","name":"Kick","classes":{"Not a label":1.0}},{"id":"snare","name":"S","classes":{"Snare drum":1}}]})");
+            auto json = juce::JSON::parse (R"({"families":[{"id":"drums","name":"Drums","classes":{"Drum":1}},{"id":"keys","name":"Keys","classes":{"Piano":1}}],
+                                               "categories":[{"id":"kick","family":"drums","name":"Kick","classes":{"Not a label":1.0}},{"id":"snare","family":"drums","name":"S","classes":{"Snare drum":1}}]})");
             expect (! bad.parse (json, labels, error));
             expect (error.contains ("unknown label"), error);
             expect (! bad.parse (juce::var(), labels, error));
+            json = juce::JSON::parse (R"({"families":[{"id":"drums","name":"Drums","classes":{"Drum":1}},{"id":"keys","name":"Keys","classes":{"Piano":1}}],
+                                         "categories":[{"id":"kick","family":"nope","name":"Kick","classes":{"Bass drum":1}},{"id":"snare","family":"drums","name":"S","classes":{"Snare drum":1}}]})");
+            expect (! bad.parse (json, labels, error), "a category must belong to a known family");
+            expectEquals ((int) t.families.size(), 7);
         }
 
-        beginTest ("Decision: detected, confidence levels, ambiguous, unknown, more audio needed");
+        beginTest ("Decision: family stage (unknown, ambiguous, more audio needed)");
         {
             // Values are derived from the thresholds in the taxonomy file, so recalibration keeps these meaningful.
             const auto& dc = t.decision;
-            const double high = std::max (dc.highConfidenceScore, dc.confidentScore) + 0.1;
-            auto d = InstrumentClassifier::decide (t, evidenceWith (t, { { "snare", high }, { "toms", high / (std::max (dc.highDominanceRatio, dc.dominanceRatio) + 0.5) } }), 0.0, 10.0, noPitch);
+            const SoundFeatures none;
+
+            auto weak = evidence (t, {});
+            std::fill (weak.families.begin(), weak.families.end(), dc.presentScore * 0.5);
+            auto d = InstrumentClassifier::decide (t, weak.families, weak.categories, 0.0, 10.0, none);
+            expect (d.status == S::Unknown, "weak evidence is not forced into a category");
+
+            const double close = dc.familyConfidentScore + 0.05;
+            auto e = evidence (t, { { "keys", close }, { "guitar", close * 0.9 } }, { { "piano", close }, { "electric_guitar", close } });
+            d = InstrumentClassifier::decide (t, e.families, e.categories, 0.0, 10.0, none);
+            expect (d.status == S::Ambiguous, "close families are not presented as a fact");
+            expectEquals ((int) d.candidates.size(), 2);
+            expect (d.instrument() == Instrument::Unknown);
+
+            e = evidence (t, { { "drums", 0.9 } });
+            d = InstrumentClassifier::decide (t, e.families, e.categories, 0.0, dc.minActiveSeconds - 0.5, kickFeatures());
+            expect (d.status == S::NeedMoreAudio, "a short fragment is not enough");
+        }
+
+        beginTest ("Decision: member stage for pitched families");
+        {
+            const auto& dc = t.decision;
+            const SoundFeatures none;
+            const double high = std::max (dc.highConfidenceScore, dc.familyConfidentScore) + 0.1;
+            auto e = evidence (t, { { "keys", high } }, { { "piano", high }, { "organ", high / (dc.highDominanceRatio + 0.5) } });
+            auto d = InstrumentClassifier::decide (t, e.families, e.categories, 0.0, 10.0, none);
             expect (d.status == S::Detected);
-            expect (d.instrument() == Instrument::SnareDrum);
+            expect (d.instrument() == Instrument::Piano);
             expect (d.confidence == InstrumentDetection::Confidence::High);
 
-            const double medium = dc.confidentScore + 0.01;
+            const double medium = std::max (dc.familyConfidentScore, dc.memberConfidentScore) + 0.01;
             expect (medium < dc.highConfidenceScore);
-            d = InstrumentClassifier::decide (t, evidenceWith (t, { { "snare", medium }, { "toms", medium / (dc.dominanceRatio + 0.2) } }), 0.0, 10.0, noPitch);
+            e = evidence (t, { { "keys", medium } }, { { "piano", medium }, { "organ", medium / (dc.memberDominanceRatio + 0.2) } });
+            d = InstrumentClassifier::decide (t, e.families, e.categories, 0.0, 10.0, none);
             expect (d.status == S::Detected);
             expect (d.confidence == InstrumentDetection::Confidence::Medium);
 
-            const double close = dc.confidentScore + 0.05;
-            d = InstrumentClassifier::decide (t, evidenceWith (t, { { "piano", close }, { "organ", close * 0.9 }, { "synth", close * 0.7 } }), 0.0, 10.0, noPitch);
-            expect (d.status == S::Ambiguous, "close scores are not presented as a fact");
-            expectEquals ((int) d.candidates.size(), 3);
-            expect (d.instrument() == Instrument::Unknown);
+            e = evidence (t, { { "keys", high } }, { { "piano", high }, { "organ", high * 0.9 } });
+            d = InstrumentClassifier::decide (t, e.families, e.categories, 0.0, 10.0, none);
+            expect (d.status == S::Ambiguous, "the family is clear but the member is not");
+            expectGreaterOrEqual ((int) d.candidates.size(), 2);
+            expect (d.message.contains ("keys"), d.message);
 
-            auto weak = evidenceWith (t, {});
-            std::fill (weak.begin(), weak.end(), dc.presentScore * 0.5);
-            d = InstrumentClassifier::decide (t, weak, 0.0, 10.0, noPitch);
-            expect (d.status == S::Unknown, "weak evidence is not forced into a category");
+            // A family with a single member needs no member dominance.
+            e = evidence (t, { { "vocal", high } }, { { "vocal", dc.presentScore } });
+            d = InstrumentClassifier::decide (t, e.families, e.categories, 0.0, 10.0, none);
+            expect (d.status == S::Detected);
+            expect (d.instrument() == Instrument::Vocal);
+        }
 
-            d = InstrumentClassifier::decide (t, evidenceWith (t, { { "snare", 0.9 } }), 0.0, dc.minActiveSeconds - 0.5, noPitch);
-            expect (d.status == S::NeedMoreAudio, "a short fragment is not enough");
+        beginTest ("Drums: the family comes from the model, the piece from the sound");
+        {
+            auto e = evidence (t, { { "drums", 0.6 } }); // the model only hears "drum", nothing specific
+            auto piece = [&] (const SoundFeatures& f) { return InstrumentClassifier::decide (t, e.families, e.categories, 0.0, 10.0, f); };
+
+            auto d = piece (kickFeatures());
+            expect (d.status == S::Detected);
+            expect (d.instrument() == Instrument::KickDrum);
+            expect (d.candidates.front().note.contains ("150 Hz"), d.candidates.front().note);
+            expect (piece (floorTomFeatures()).instrument() == Instrument::FloorTom);
+            expect (piece (snareFeatures()).instrument() == Instrument::SnareDrum);
+            expect (piece (rackTomFeatures()).instrument() == Instrument::RackTom);
+            expect (piece (hiHatFeatures()).instrument() == Instrument::Cymbals);
+            expect (piece (kitFeatures()).instrument() == Instrument::Overheads);
+
+            // Borderline decay: kick or floor tom, not a guess.
+            auto borderline = kickFeatures();
+            borderline.decaySeconds = t.drumRules.kickMaxDecaySeconds * 1.05;
+            d = piece (borderline);
+            expect (d.status == S::Ambiguous);
+            expectEquals ((int) d.candidates.size(), 2);
+            expect (d.candidates[0].instrument == Instrument::KickDrum && d.candidates[1].instrument == Instrument::FloorTom);
+
+            auto noisyTom = rackTomFeatures();
+            noisyTom.flatness = t.drumRules.snareMinFlatness;
+            expect (piece (noisyTom).status == S::Ambiguous);
+
+            // No measurements at all: drums, without inventing the piece.
+            d = piece (SoundFeatures {});
+            expect (d.status == S::Ambiguous);
+            expect (d.candidates.size() == 1 && d.candidates[0].instrument == Instrument::Drums);
+
+            // The model's own hand-percussion classes win over the kit rules.
+            const double perc = t.drumRules.modelPercussionScore + 0.1;
+            e = evidence (t, { { "drums", 0.6 } }, { { "percussion", perc } });
+            expect (piece (snareFeatures()).instrument() == Instrument::Percussion);
+
+            // When the model also names the piece, confidence rises.
+            e = evidence (t, { { "drums", 0.9 } }, { { "cymbals", 0.8 } });
+            d = piece (hiHatFeatures());
+            expect (d.instrument() == Instrument::Cymbals);
+            expect (d.confidence == InstrumentDetection::Confidence::High);
+
+            // Pitch splits a tonal tom into rack or floor.
+            auto lowTom = rackTomFeatures();
+            lowTom.pitch = pitchAt (85, 80, 95);
+            expect (estimateDrumPiece (t.drumRules, lowTom, t.refinements.rackFloorTomSplitHz).piece == Instrument::FloorTom);
+
+            // The model hears nothing musical, but regular hits were measured: offered as a possibility only.
+            auto silentModel = evidence (t, {});
+            auto hits = kickFeatures();
+            d = InstrumentClassifier::decide (t, silentModel.families, silentModel.categories, 0.0, 10.0, hits);
+            expect (d.status == S::Ambiguous, "measurements alone never give a detection");
+            expect (d.candidates.size() == 1 && d.candidates[0].instrument == Instrument::KickDrum);
+            expect (d.candidates[0].note.contains ("measurements only"), d.candidates[0].note);
+            hits.percussive = false;
+            d = InstrumentClassifier::decide (t, silentModel.families, silentModel.categories, 0.0, 10.0, hits);
+            expect (d.status == S::Unknown, "without measured hits nothing is suggested");
+
+            // If the family is unclear, drums is still offered with its estimated piece.
+            const double close = t.decision.familyConfidentScore + 0.05;
+            e = evidence (t, { { "drums", close }, { "other", close * 0.9 } }, { { "acoustic_other", close } });
+            d = piece (kickFeatures());
+            expect (d.status == S::Ambiguous);
+            expect (std::any_of (d.candidates.begin(), d.candidates.end(), [] (auto& c) { return c.instrument == Instrument::KickDrum; }));
         }
 
         beginTest ("Refinements use measured evidence and say so");
         {
-            auto vocal = evidenceWith (t, { { "vocal", 0.6 } });
-            expect (InstrumentClassifier::decide (t, vocal, 0, 10, pitchAt (120, 95, 180)).instrument() == Instrument::MaleVocal);
-            expect (InstrumentClassifier::decide (t, vocal, 0, 10, pitchAt (330, 240, 520)).instrument() == Instrument::FemaleVocal);
-            auto unsure = InstrumentClassifier::decide (t, vocal, 0, 10, pitchAt (200, 150, 300));
+            const SoundFeatures none;
+            auto withPitch = [] (PitchSummary p) { SoundFeatures f; f.pitch = p; return f; };
+            auto run = [&] (const Evidence& e, double distortion, const SoundFeatures& f)
+            {
+                return InstrumentClassifier::decide (t, e.families, e.categories, distortion, 10.0, f);
+            };
+
+            auto vocal = evidence (t, { { "vocal", 0.6 } }, { { "vocal", 0.6 } });
+            expect (run (vocal, 0, withPitch (pitchAt (120, 95, 180))).instrument() == Instrument::MaleVocal);
+            expect (run (vocal, 0, withPitch (pitchAt (330, 240, 520))).instrument() == Instrument::FemaleVocal);
+            auto unsure = run (vocal, 0, withPitch (pitchAt (200, 150, 300)));
             expect (unsure.instrument() == Instrument::Vocal, "overlapping range stays generic");
             expect (unsure.candidates.front().note.isNotEmpty());
-            expect (InstrumentClassifier::decide (t, vocal, 0, 10, noPitch).instrument() == Instrument::Vocal);
+            expect (run (vocal, 0, none).instrument() == Instrument::Vocal);
 
-            auto toms = evidenceWith (t, { { "toms", 0.5 } });
-            expect (InstrumentClassifier::decide (t, toms, 0, 10, pitchAt (150, 140, 165)).instrument() == Instrument::RackTom);
-            expect (InstrumentClassifier::decide (t, toms, 0, 10, pitchAt (85, 80, 95)).instrument() == Instrument::FloorTom);
-            expect (InstrumentClassifier::decide (t, toms, 0, 10, noPitch).instrument() == Instrument::Toms);
+            auto guitar = evidence (t, { { "guitar", 0.6 } }, { { "electric_guitar", 0.6 } });
+            expect (run (guitar, 0.4, none).instrument() == Instrument::DistortedGuitar);
+            expect (run (guitar, 0.01, none).instrument() == Instrument::CleanGuitar);
+            expect (run (guitar, 0.12, none).instrument() == Instrument::ElectricGuitar);
 
-            auto guitar = evidenceWith (t, { { "electric_guitar", 0.6 } });
-            expect (InstrumentClassifier::decide (t, guitar, 0.4, 10, noPitch).instrument() == Instrument::DistortedGuitar);
-            expect (InstrumentClassifier::decide (t, guitar, 0.01, 10, noPitch).instrument() == Instrument::CleanGuitar);
-            expect (InstrumentClassifier::decide (t, guitar, 0.12, 10, noPitch).instrument() == Instrument::ElectricGuitar);
+            auto synth = evidence (t, { { "keys", 0.6 } }, { { "synth", 0.6 } });
+            expect (run (synth, 0, withPitch (pitchAt (55, 41, 82))).instrument() == Instrument::SynthBass);
+            expect (run (synth, 0, withPitch (pitchAt (440, 300, 600))).instrument() == Instrument::Synthesizer);
+        }
 
-            auto synth = evidenceWith (t, { { "synth", 0.6 } });
-            expect (InstrumentClassifier::decide (t, synth, 0, 10, pitchAt (55, 41, 82)).instrument() == Instrument::SynthBass);
-            expect (InstrumentClassifier::decide (t, synth, 0, 10, pitchAt (440, 300, 600)).instrument() == Instrument::Synthesizer);
+        beginTest ("Drum measurements: the real analysis tells synthetic drums apart");
+        {
+            const std::pair<const char*, Instrument> pieces[] = { { "kick", Instrument::KickDrum }, { "floortom", Instrument::FloorTom },
+                                                                  { "racktom", Instrument::RackTom }, { "snare", Instrument::SnareDrum },
+                                                                  { "hihat", Instrument::Cymbals } };
+            for (auto [name, expected] : pieces)
+            {
+                const auto audio = drumLoop (name);
+                const auto analysis = eyra::analysis::analyseAudio (audio.data(), (int) audio.size(), 48000.0);
+                const auto f = SoundFeatures::from (analysis);
+                const auto est = estimateDrumPiece (t.drumRules, f, t.refinements.rackFloorTomSplitHz);
+                expect (est.piece == expected, juce::String (name) + ": got " + instrumentName (est.piece) + " (" + est.note
+                                                 + ", low " + juce::String (f.lowShare, 2) + ", high " + juce::String (f.highShare, 2)
+                                                 + ", flatness " + juce::String (f.flatness, 2) + ", decay " + juce::String (f.decaySeconds, 3) + ")");
+                expect (f.percussive, juce::String (name) + " is measured as regular hits");
+            }
         }
 
         beginTest ("Model manager: validation, damage detection and update preference");
@@ -232,7 +427,7 @@ public:
             expect (! c->ensureInitialised());
             expect (c->getStatus().contains ("unavailable"), c->getStatus());
             std::vector<float> audio (48000 * 5, 0.1f);
-            auto d = c->classify (audio.data(), (int) audio.size(), 48000.0, noPitch);
+            auto d = c->classify (audio.data(), (int) audio.size(), 48000.0, noAnalysis);
             expect (d.status == S::Unavailable);
             ModelManager::setSearchRootsForTesting ({});
         }
@@ -298,7 +493,7 @@ public:
         beginTest ("Classification runs at any sample rate and gives consistent results");
         {
             const auto wave16 = readFloats (dir.getChildFile (ref.getProperty ("waveform", "").toString()));
-            auto at16 = classifier->classify (wave16.data(), (int) wave16.size(), 16000.0, noPitch);
+            auto at16 = classifier->classify (wave16.data(), (int) wave16.size(), 16000.0, noAnalysis);
             expect (at16.status != S::Unavailable, at16.message);
             expect (! at16.topLabels.empty());
 
@@ -310,7 +505,7 @@ public:
                 const size_t k = std::min ((size_t) pos, wave16.size() - 2);
                 wave48[i] = (float) (wave16[k] + (pos - k) * (wave16[k + 1] - wave16[k]));
             }
-            auto at48 = classifier->classify (wave48.data(), (int) wave48.size(), 48000.0, noPitch);
+            auto at48 = classifier->classify (wave48.data(), (int) wave48.size(), 48000.0, noAnalysis);
             expect (! at48.topLabels.empty());
             if (! at16.topLabels.empty() && ! at48.topLabels.empty())
             {
@@ -320,7 +515,7 @@ public:
             }
 
             std::vector<float> silence (48000 * 5, 0.0f);
-            auto s = classifier->classify (silence.data(), (int) silence.size(), 48000.0, noPitch);
+            auto s = classifier->classify (silence.data(), (int) silence.size(), 48000.0, noAnalysis);
             expect (s.status != S::Detected, "silence is never classified as an instrument");
         }
     }

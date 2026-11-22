@@ -39,6 +39,16 @@ namespace detail
             if (ctx.isActiveAt (start, size))
                 starts.push_back (start);
 
+        // Sparse short hits (a drum machine kick, say) rarely fill half a long frame: use every frame that
+        // contains signal. The average is power-weighted, so the quiet parts barely change its shape.
+        if (starts.size() < 8)
+        {
+            starts.clear();
+            for (int start = 0; start + size <= n; start += hop)
+                if (ctx.isActiveAt (start, size, 0.0))
+                    starts.push_back (start);
+        }
+
         // Bound memory and time: analyse at most 240 evenly spread frames.
         constexpr size_t maxFrames = 240;
         if (starts.size() > maxFrames)
@@ -77,6 +87,78 @@ namespace detail
             ctx.ltasDb[(size_t) k] = powerToDb (ctx.ltasPower[(size_t) k]);
         }
     }
+    /** Band shares, noisiness and decay per hit: used by instrument recognition. Needs the short-time
+        analysis, onsets and long-time spectrum. */
+    void measureSoundCharacter (Context& ctx)
+    {
+        auto& r = ctx.result;
+    {
+        double total = 0.0, low = 0.0, lowMid = 0.0, mid = 0.0, high = 0.0, logSum = 0.0, linSum = 0.0, weighted = 0.0;
+        int flatCount = 0;
+        for (int k = 1; k <= ctx.maxAnalysisBin; ++k)
+        {
+            const double f = k * ctx.longBinHz, p = ctx.ltasPower[(size_t) k];
+            if (f < 20.0)
+                continue;
+            total += p;
+            weighted += f * p;
+            (f < 150.0 ? low : (f < 1000.0 ? lowMid : (f < 5000.0 ? mid : high))) += p;
+            if (f >= 150.0 && f <= 8000.0)
+            {
+                logSum += std::log (std::max (p, 1.0e-20));
+                linSum += p;
+                ++flatCount;
+            }
+        }
+        if (total > 0.0)
+        {
+            r.lowShare = low / total;
+            r.lowMidShare = lowMid / total;
+            r.midShare = mid / total;
+            r.highShare = high / total;
+            if (r.spectralCentroidHz <= 0.0) // (not measured by the tonal balance stage)
+                r.spectralCentroidHz = weighted / total;
+        }
+        if (flatCount > 0 && linSum > 0.0)
+            r.spectralFlatness = std::exp (logSum / flatCount) / (linSum / flatCount);
+
+        // Decay per hit from a 5 ms peak envelope: time from the peak until it is 20 dB lower.
+        const int block = std::max (1, (int) std::lround (0.005 * ctx.sampleRate));
+        std::vector<double> decays;
+        for (size_t i = 0; i < ctx.onsets.size(); ++i)
+        {
+            const int start = std::max (0, ctx.onsets[i] * ctx.shortHop - ctx.shortSize / 2);
+            const int next = i + 1 < ctx.onsets.size() ? ctx.onsets[i + 1] * ctx.shortHop - ctx.shortSize / 2 : (int) ctx.signal.size();
+            const int end = std::min ({ (int) ctx.signal.size(), next, start + (int) (1.5 * ctx.sampleRate) });
+            std::vector<float> env;
+            for (int b = start; b + block <= end; b += block)
+            {
+                float m = 0.0f;
+                for (int j = b; j < b + block; ++j)
+                    m = std::max (m, std::abs (ctx.signal[(size_t) j]));
+                env.push_back (m);
+            }
+            if (env.size() < 4)
+                continue;
+            const auto peakIt = std::max_element (env.begin(), env.begin() + (ptrdiff_t) std::min<size_t> (env.size(), 30));
+            const size_t peak = (size_t) (peakIt - env.begin());
+            size_t k = peak;
+            while (k < env.size() && env[k] >= 0.1f * *peakIt)
+                ++k;
+            const double seconds = (double) (k - peak) * block / ctx.sampleRate;
+            // A hit cut off by the next one still rings at least this long: keep it when that is already long.
+            if (k < env.size() || seconds >= 0.3)
+                decays.push_back (seconds);
+        }
+        if (decays.size() >= 3)
+        {
+            std::nth_element (decays.begin(), decays.begin() + (ptrdiff_t) (decays.size() / 2), decays.end());
+            r.medianDecaySeconds = decays[decays.size() / 2];
+        }
+    }
+
+    }
+
 } // namespace detail
 
 AnalysisResult analyseAudio (const float* mono, int numSamples, double sampleRate, const AnalysisSettings& settings)
@@ -142,6 +224,11 @@ AnalysisResult analyseAudio (const float* mono, int numSamples, double sampleRat
     }
     if (ctx.activeSeconds < settings.minActiveSeconds)
     {
+        // Too little for findings, but sparse drum hits are still measured for instrument recognition.
+        computeShortTimeAnalysis (ctx);
+        detectOnsets (ctx);
+        computeLongTimeSpectrum (ctx);
+        measureSoundCharacter (ctx);
         r.status = AnalysisResult::Status::InsufficientAudio;
         r.message = "Only " + juce::String (ctx.activeSeconds, 1) + " s of signal. Play at least "
                   + juce::String (settings.minActiveSeconds, 0) + " s for a meaningful analysis.";
@@ -155,6 +242,7 @@ AnalysisResult analyseAudio (const float* mono, int numSamples, double sampleRat
     computeLongTimeSpectrum (ctx);
     detectResonances (ctx);      // first, so broad balance can ignore narrow peaks
     analyseTonalBalance (ctx);
+    measureSoundCharacter (ctx);
 
     // --- Post-processing -----------------------------------------------------------------------
     // A modest broad "buildup" produced by a strong narrow peak is reported as that peak only.

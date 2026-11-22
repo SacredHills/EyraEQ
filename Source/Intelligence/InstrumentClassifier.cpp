@@ -36,6 +36,7 @@ juce::String instrumentName (Instrument i)
         case Instrument::Strings:            return "Strings";
         case Instrument::Brass:              return "Brass";
         case Instrument::AcousticInstrument: return "Acoustic instrument";
+        case Instrument::Drums:              return "Drums";
         case Instrument::NumInstruments:     break;
     }
     return "Unknown";
@@ -80,6 +81,22 @@ juce::String describe (const InstrumentDetection& d)
 }
 
 //==============================================================================
+int Taxonomy::familyIndex (const juce::String& id) const
+{
+    for (size_t i = 0; i < families.size(); ++i)
+        if (families[i].id == id)
+            return (int) i;
+    return -1;
+}
+
+int Taxonomy::categoryIndex (const juce::String& id) const
+{
+    for (size_t i = 0; i < categories.size(); ++i)
+        if (categories[i].id == id)
+            return (int) i;
+    return -1;
+}
+
 bool Taxonomy::parse (const juce::var& json, const juce::StringArray& labels, juce::String& error)
 {
     if (! json.isObject())
@@ -88,59 +105,168 @@ bool Taxonomy::parse (const juce::var& json, const juce::StringArray& labels, ju
         return false;
     }
 
+    auto read = [] (const juce::var& obj, const char* key, double& value) { value = obj.getProperty (key, value); };
+
     const auto d = json.getProperty ("decision", {});
-    decision.minActiveSeconds = d.getProperty ("minActiveSeconds", decision.minActiveSeconds);
-    decision.presentScore = d.getProperty ("presentScore", decision.presentScore);
-    decision.confidentScore = d.getProperty ("confidentScore", decision.confidentScore);
-    decision.highConfidenceScore = d.getProperty ("highConfidenceScore", decision.highConfidenceScore);
-    decision.dominanceRatio = d.getProperty ("dominanceRatio", decision.dominanceRatio);
-    decision.highDominanceRatio = d.getProperty ("highDominanceRatio", decision.highDominanceRatio);
-    decision.candidateRatio = d.getProperty ("candidateRatio", decision.candidateRatio);
+    read (d, "minActiveSeconds", decision.minActiveSeconds);
+    read (d, "presentScore", decision.presentScore);
+    read (d, "familyConfidentScore", decision.familyConfidentScore);
+    read (d, "familyDominanceRatio", decision.familyDominanceRatio);
+    read (d, "memberConfidentScore", decision.memberConfidentScore);
+    read (d, "memberDominanceRatio", decision.memberDominanceRatio);
+    read (d, "highConfidenceScore", decision.highConfidenceScore);
+    read (d, "highDominanceRatio", decision.highDominanceRatio);
+    read (d, "candidateRatio", decision.candidateRatio);
     decision.maxCandidates = d.getProperty ("maxCandidates", decision.maxCandidates);
+
+    const auto dr = json.getProperty ("drumRules", {});
+    read (dr, "cymbalMinHighShare", drumRules.cymbalMinHighShare);
+    read (dr, "cymbalMinCentroidHz", drumRules.cymbalMinCentroidHz);
+    read (dr, "cymbalMaxLowShare", drumRules.cymbalMaxLowShare);
+    read (dr, "kitMinLowShare", drumRules.kitMinLowShare);
+    read (dr, "kitMinHighShare", drumRules.kitMinHighShare);
+    read (dr, "lowMinShare", drumRules.lowMinShare);
+    read (dr, "kickMaxDecaySeconds", drumRules.kickMaxDecaySeconds);
+    read (dr, "decayMargin", drumRules.decayMargin);
+    read (dr, "snareMinFlatness", drumRules.snareMinFlatness);
+    read (dr, "flatnessMargin", drumRules.flatnessMargin);
+    read (dr, "modelPercussionScore", drumRules.modelPercussionScore);
 
     const auto r = json.getProperty ("refinements", {});
     refinements.distortionIndex = labels.indexOf (r.getProperty ("distortionClass", "Distortion").toString());
-    refinements.distortedGuitarScore = r.getProperty ("distortedGuitarScore", refinements.distortedGuitarScore);
-    refinements.cleanGuitarScore = r.getProperty ("cleanGuitarScore", refinements.cleanGuitarScore);
-    refinements.maleVocalMaxMedianHz = r.getProperty ("maleVocalMaxMedianHz", refinements.maleVocalMaxMedianHz);
-    refinements.maleVocalMaxHighHz = r.getProperty ("maleVocalMaxHighHz", refinements.maleVocalMaxHighHz);
-    refinements.femaleVocalMinMedianHz = r.getProperty ("femaleVocalMinMedianHz", refinements.femaleVocalMinMedianHz);
-    refinements.femaleVocalMinLowHz = r.getProperty ("femaleVocalMinLowHz", refinements.femaleVocalMinLowHz);
-    refinements.rackFloorTomSplitHz = r.getProperty ("rackFloorTomSplitHz", refinements.rackFloorTomSplitHz);
-    refinements.synthBassMaxMedianHz = r.getProperty ("synthBassMaxMedianHz", refinements.synthBassMaxMedianHz);
+    read (r, "distortedGuitarScore", refinements.distortedGuitarScore);
+    read (r, "cleanGuitarScore", refinements.cleanGuitarScore);
+    read (r, "maleVocalMaxMedianHz", refinements.maleVocalMaxMedianHz);
+    read (r, "maleVocalMaxHighHz", refinements.maleVocalMaxHighHz);
+    read (r, "femaleVocalMinMedianHz", refinements.femaleVocalMinMedianHz);
+    read (r, "femaleVocalMinLowHz", refinements.femaleVocalMinLowHz);
+    read (r, "rackFloorTomSplitHz", refinements.rackFloorTomSplitHz);
+    read (r, "synthBassMaxMedianHz", refinements.synthBassMaxMedianHz);
 
-    categories.clear();
-    const auto cats = json.getProperty ("categories", {});
-    if (! cats.isArray() || cats.size() < 2)
+    auto parseGroups = [&] (const juce::var& list, std::vector<Group>& out, bool isCategory)
     {
-        error = "taxonomy has no categories";
-        return false;
-    }
-
-    for (const auto& c : *cats.getArray())
-    {
-        Category cat;
-        cat.id = c.getProperty ("id", "").toString();
-        cat.name = c.getProperty ("name", "").toString();
-        if (auto* obj = c.getProperty ("classes", {}).getDynamicObject())
-            for (const auto& prop : obj->getProperties())
-            {
-                const int index = labels.indexOf (prop.name.toString());
-                if (index < 0)
-                {
-                    error = "taxonomy category '" + cat.id + "' refers to unknown label '" + prop.name.toString() + "'";
-                    return false;
-                }
-                cat.classes.emplace_back (index, (double) prop.value);
-            }
-        if (cat.id.isEmpty() || cat.classes.empty() || instrumentForCategory (cat.id) == Instrument::Unknown)
+        out.clear();
+        if (! list.isArray() || list.size() < 2)
         {
-            error = "taxonomy category '" + cat.id + "' is invalid";
+            error = isCategory ? "taxonomy has no categories" : "taxonomy has no families";
             return false;
         }
-        categories.push_back (std::move (cat));
+        for (const auto& c : *list.getArray())
+        {
+            Group g;
+            g.id = c.getProperty ("id", "").toString();
+            g.name = c.getProperty ("name", "").toString();
+            for (auto [key, target] : { std::pair { "classes", &g.classes }, std::pair { "percussiveClasses", &g.percussiveClasses } })
+                if (auto* obj = c.getProperty (key, {}).getDynamicObject())
+                    for (const auto& prop : obj->getProperties())
+                    {
+                        const int index = labels.indexOf (prop.name.toString());
+                        if (index < 0)
+                        {
+                            error = "taxonomy group '" + g.id + "' refers to unknown label '" + prop.name.toString() + "'";
+                            return false;
+                        }
+                        target->emplace_back (index, (double) prop.value);
+                    }
+            if (isCategory)
+            {
+                g.family = familyIndex (c.getProperty ("family", "").toString());
+                if (g.family < 0 || instrumentForCategory (g.id) == Instrument::Unknown)
+                {
+                    error = "taxonomy category '" + g.id + "' is invalid (unknown id or family)";
+                    return false;
+                }
+            }
+            if (g.id.isEmpty() || g.classes.empty())
+            {
+                error = "taxonomy group '" + g.id + "' is invalid";
+                return false;
+            }
+            out.push_back (std::move (g));
+        }
+        return true;
+    };
+
+    return parseGroups (json.getProperty ("families", {}), families, false)
+        && parseGroups (json.getProperty ("categories", {}), categories, true);
+}
+
+SoundFeatures SoundFeatures::from (const analysis::AnalysisResult& r)
+{
+    SoundFeatures f;
+    f.pitch = r.pitch;
+    f.lowShare = r.lowShare;
+    f.lowMidShare = r.lowMidShare;
+    f.midShare = r.midShare;
+    f.highShare = r.highShare;
+    f.centroidHz = r.spectralCentroidHz;
+    f.flatness = r.spectralFlatness;
+    f.decaySeconds = r.medianDecaySeconds;
+    f.percussive = r.percussive;
+    return f;
+}
+
+DrumEstimate estimateDrumPiece (const Taxonomy::DrumRules& r, const SoundFeatures& f, double split)
+{
+    DrumEstimate e;
+    auto pct = [] (double share) { return juce::String (juce::roundToInt (100.0 * share)) + "%"; };
+    auto near = [] (double x, double threshold, double margin) { return std::abs (x - threshold) <= margin * threshold; };
+
+    if (f.lowShare + f.lowMidShare + f.midShare + f.highShare <= 0.0)
+        return e; // no measurements
+
+    if (f.highShare >= r.cymbalMinHighShare || (f.centroidHz >= r.cymbalMinCentroidHz && f.lowShare < r.cymbalMaxLowShare))
+    {
+        e.piece = Instrument::Cymbals;
+        e.note = pct (f.highShare) + " of the energy above 5 kHz";
+        return e;
     }
-    return true;
+
+    if (f.lowShare >= r.kitMinLowShare && f.highShare >= r.kitMinHighShare)
+    {
+        e.piece = Instrument::Overheads;
+        e.note = "strong low and high drums together (" + pct (f.lowShare) + " below 150 Hz, " + pct (f.highShare) + " above 5 kHz)";
+        return e;
+    }
+
+    if (f.lowShare >= r.lowMinShare)
+    {
+        const juce::String where = pct (f.lowShare) + " of the energy below 150 Hz";
+        if (f.decaySeconds <= 0.0 || near (f.decaySeconds, r.kickMaxDecaySeconds, r.decayMargin))
+        {
+            e.candidates = { Instrument::KickDrum, Instrument::FloorTom };
+            e.note = where + "; decay " + (f.decaySeconds > 0.0 ? juce::String (juce::roundToInt (f.decaySeconds * 1000.0)) + " ms is borderline" : juce::String ("not measurable"));
+            return e;
+        }
+        const bool kick = f.decaySeconds < r.kickMaxDecaySeconds;
+        e.piece = kick ? Instrument::KickDrum : Instrument::FloorTom;
+        e.note = where + ", " + (kick ? "short" : "long") + " decay (" + juce::String (juce::roundToInt (f.decaySeconds * 1000.0)) + " ms)";
+        return e;
+    }
+
+    const juce::String noise = "noisiness " + juce::String (f.flatness, 2);
+    auto tom = [&]
+    {
+        const bool hasPitch = f.pitch.pitched && f.pitch.medianHz > 0.0;
+        return hasPitch && f.pitch.medianHz < split ? Instrument::FloorTom : Instrument::RackTom;
+    };
+    if (near (f.flatness, r.snareMinFlatness, r.flatnessMargin))
+    {
+        e.candidates = { Instrument::SnareDrum, tom() };
+        e.note = noise + " is borderline between snare and tom";
+        return e;
+    }
+    if (f.flatness >= r.snareMinFlatness)
+    {
+        e.piece = Instrument::SnareDrum;
+        e.note = "noisy midrange (snare wires), " + noise;
+    }
+    else
+    {
+        e.piece = tom();
+        e.note = "tonal midrange body, " + noise + (f.pitch.pitched ? ", pitch " + juce::String (juce::roundToInt (f.pitch.medianHz)) + " Hz" : juce::String());
+    }
+    return e;
 }
 
 //==============================================================================
@@ -301,7 +427,7 @@ bool InstrumentClassifier::selfTest (juce::String& error) const
 }
 
 //==============================================================================
-InstrumentDetection InstrumentClassifier::classify (const float* mono, int numSamples, double sampleRate, const analysis::PitchSummary& pitch) const
+InstrumentDetection InstrumentClassifier::classify (const float* mono, int numSamples, double sampleRate, const analysis::AnalysisResult& analysis) const
 {
     InstrumentDetection d;
     if (! isReady())
@@ -366,20 +492,29 @@ InstrumentDetection InstrumentClassifier::classify (const float* mono, int numSa
     const int numLabels = labels.size();
     const int n = (int) active.size();
 
-    // Category evidence: mean over patches of the strongest weighted class score.
-    std::vector<double> evidence (taxonomy.categories.size(), 0.0);
-    for (size_t ci = 0; ci < taxonomy.categories.size(); ++ci)
+    // Evidence: mean over patches of the strongest weighted class score of each group.
+    auto evidenceFor = [&] (const std::vector<Taxonomy::Group>& groups)
     {
-        double sum = 0.0;
-        for (int p = 0; p < n; ++p)
+        std::vector<double> e (groups.size(), 0.0);
+        for (size_t gi = 0; gi < groups.size(); ++gi)
         {
-            double best = 0.0;
-            for (const auto& [index, weight] : taxonomy.categories[ci].classes)
-                best = std::max (best, weight * scores[(size_t) (p * numLabels + index)]);
-            sum += best;
+            double sum = 0.0;
+            for (int p = 0; p < n; ++p)
+            {
+                double best = 0.0;
+                for (const auto& [index, weight] : groups[gi].classes)
+                    best = std::max (best, weight * scores[(size_t) (p * numLabels + index)]);
+                if (analysis.percussive)
+                    for (const auto& [index, weight] : groups[gi].percussiveClasses)
+                        best = std::max (best, weight * scores[(size_t) (p * numLabels + index)]);
+                sum += best;
+            }
+            e[gi] = sum / n;
         }
-        evidence[ci] = sum / n;
-    }
+        return e;
+    };
+    const auto familyEvidence = evidenceFor (taxonomy.families);
+    const auto categoryEvidence = evidenceFor (taxonomy.categories);
 
     std::vector<double> meanScores ((size_t) numLabels, 0.0);
     for (int p = 0; p < n; ++p)
@@ -387,7 +522,7 @@ InstrumentDetection InstrumentClassifier::classify (const float* mono, int numSa
             meanScores[(size_t) k] += scores[(size_t) (p * numLabels + k)] / n;
     const double distortion = taxonomy.refinements.distortionIndex >= 0 ? meanScores[(size_t) taxonomy.refinements.distortionIndex] : 0.0;
 
-    auto result = decide (taxonomy, evidence, distortion, d.activeSeconds, pitch);
+    auto result = decide (taxonomy, familyEvidence, categoryEvidence, distortion, d.activeSeconds, SoundFeatures::from (analysis));
     result.model = d.model;
 
     std::vector<int> order ((size_t) numLabels);
@@ -398,10 +533,12 @@ InstrumentDetection InstrumentClassifier::classify (const float* mono, int numSa
     return result;
 }
 
-InstrumentDetection InstrumentClassifier::decide (const Taxonomy& t, const std::vector<double>& evidence, double distortion,
-                                                  double activeSeconds, const analysis::PitchSummary& pitch)
+InstrumentDetection InstrumentClassifier::decide (const Taxonomy& t, const std::vector<double>& familyEvidence,
+                                                  const std::vector<double>& categoryEvidence, double distortion,
+                                                  double activeSeconds, const SoundFeatures& f)
 {
     using S = InstrumentDetection::Status;
+    using C = InstrumentDetection::Confidence;
     InstrumentDetection d;
     d.activeSeconds = activeSeconds;
     const auto& dc = t.decision;
@@ -414,26 +551,28 @@ InstrumentDetection InstrumentClassifier::decide (const Taxonomy& t, const std::
         return d;
     }
 
-    std::vector<size_t> order (evidence.size());
-    std::iota (order.begin(), order.end(), size_t { 0 });
-    std::sort (order.begin(), order.end(), [&] (size_t a, size_t b) { return evidence[a] > evidence[b]; });
-    const double best = evidence[order[0]];
-    const double second = order.size() > 1 ? evidence[order[1]] : 0.0;
+    auto ranked = [] (const std::vector<double>& v, const std::vector<int>& subset)
+    {
+        std::vector<int> order (subset);
+        std::sort (order.begin(), order.end(), [&] (int a, int b) { return v[(size_t) a] > v[(size_t) b]; });
+        return order;
+    };
+    auto all = [] (size_t n) { std::vector<int> v (n); std::iota (v.begin(), v.end(), 0); return v; };
 
-    // Refines a category into a specific instrument using evidence the model cannot provide itself.
-    auto refine = [&] (size_t ci)
+    // Refines a category into a specific instrument with evidence the model cannot provide itself.
+    auto refine = [&] (int ci)
     {
         InstrumentCandidate c;
-        c.categoryId = t.categories[ci].id;
-        c.score = evidence[ci];
+        c.categoryId = t.categories[(size_t) ci].id;
+        c.score = categoryEvidence[(size_t) ci];
         c.instrument = instrumentForCategory (c.categoryId);
-        const bool hasPitch = pitch.pitched && pitch.medianHz > 0.0;
+        const bool hasPitch = f.pitch.pitched && f.pitch.medianHz > 0.0;
 
         if (c.instrument == Instrument::Vocal && hasPitch)
         {
-            if (pitch.medianHz <= rf.maleVocalMaxMedianHz && pitch.highHz <= rf.maleVocalMaxHighHz)
+            if (f.pitch.medianHz <= rf.maleVocalMaxMedianHz && f.pitch.highHz <= rf.maleVocalMaxHighHz)
                 c.instrument = Instrument::MaleVocal;
-            else if (pitch.medianHz >= rf.femaleVocalMinMedianHz && pitch.lowHz >= rf.femaleVocalMinLowHz)
+            else if (f.pitch.medianHz >= rf.femaleVocalMinMedianHz && f.pitch.lowHz >= rf.femaleVocalMinLowHz)
                 c.instrument = Instrument::FemaleVocal;
             c.note = c.instrument == Instrument::Vocal ? "voice range not conclusive" : "from the voice's pitch range";
         }
@@ -441,8 +580,8 @@ InstrumentDetection InstrumentClassifier::decide (const Taxonomy& t, const std::
             c.note = "no steady pitch to judge the voice";
         else if (c.instrument == Instrument::Toms && hasPitch)
         {
-            c.instrument = pitch.medianHz >= rf.rackFloorTomSplitHz ? Instrument::RackTom : Instrument::FloorTom;
-            c.note = "from its pitch, " + juce::String (juce::roundToInt (pitch.medianHz)) + " Hz";
+            c.instrument = f.pitch.medianHz >= rf.rackFloorTomSplitHz ? Instrument::RackTom : Instrument::FloorTom;
+            c.note = "from its pitch, " + juce::String (juce::roundToInt (f.pitch.medianHz)) + " Hz";
         }
         else if (c.instrument == Instrument::ElectricGuitar)
         {
@@ -451,40 +590,173 @@ InstrumentDetection InstrumentClassifier::decide (const Taxonomy& t, const std::
             else if (distortion <= rf.cleanGuitarScore)
                 c.instrument = Instrument::CleanGuitar, c.note = "no distortion detected";
         }
-        else if (c.instrument == Instrument::Synthesizer && hasPitch && pitch.medianHz <= rf.synthBassMaxMedianHz)
+        else if (c.instrument == Instrument::Synthesizer && hasPitch && f.pitch.medianHz <= rf.synthBassMaxMedianHz)
         {
             c.instrument = Instrument::SynthBass;
-            c.note = "low register, " + juce::String (juce::roundToInt (pitch.medianHz)) + " Hz";
+            c.note = "low register, " + juce::String (juce::roundToInt (f.pitch.medianHz)) + " Hz";
         }
         return c;
     };
 
-    if (best < dc.presentScore)
+    auto membersOf = [&] (int family)
     {
+        std::vector<int> m;
+        for (size_t i = 0; i < t.categories.size(); ++i)
+            if (t.categories[i].family == family)
+                m.push_back ((int) i);
+        return ranked (categoryEvidence, m);
+    };
+
+    // --- Stage 1: family ---------------------------------------------------------------
+    const auto families = ranked (familyEvidence, all (t.families.size()));
+    const int bestFamily = families[0];
+    const double fb = familyEvidence[(size_t) bestFamily];
+    const double fs = families.size() > 1 ? familyEvidence[(size_t) families[1]] : 0.0;
+
+    if (fb < dc.presentScore)
+    {
+        // Short synthetic drum hits often sound like nothing in particular to the model. If the analysis
+        // measured regular hits whose sound points clearly to one drum, offer it as a possibility only.
+        if (f.percussive)
+        {
+            const auto est = estimateDrumPiece (t.drumRules, f, rf.rackFloorTomSplitHz);
+            std::vector<Instrument> pieces = est.candidates;
+            if (est.piece != Instrument::Unknown)
+                pieces = { est.piece };
+            if (! pieces.empty())
+            {
+                d.status = S::Ambiguous;
+                for (auto inst : pieces)
+                {
+                    InstrumentCandidate c;
+                    c.instrument = inst;
+                    c.categoryId = "drums";
+                    c.score = fb;
+                    c.note = "from the measurements only: " + est.note;
+                    d.candidates.push_back (c);
+                }
+                d.message = "The model did not recognise the sound; regular hits were measured and their sound suggests the instrument shown.";
+                return d;
+            }
+        }
         d.status = S::Unknown;
-        d.message = "No instrument category had enough evidence; choose one manually if needed.";
+        d.message = "No instrument family had enough evidence; choose the instrument manually if needed.";
         return d;
     }
 
-    if (best >= dc.confidentScore && best >= dc.dominanceRatio * std::max (second, 1.0e-9))
+    const int drums = t.familyIndex ("drums");
+
+    // The most likely instrument within a family (used for candidates when the family is unclear).
+    auto representative = [&] (int family)
+    {
+        if (family == drums)
+        {
+            const auto est = estimateDrumPiece (t.drumRules, f, rf.rackFloorTomSplitHz);
+            InstrumentCandidate c;
+            c.instrument = est.piece != Instrument::Unknown ? est.piece : Instrument::Drums;
+            c.categoryId = "drums";
+            c.score = familyEvidence[(size_t) family];
+            c.note = est.note;
+            return c;
+        }
+        auto c = refine (membersOf (family)[0]);
+        c.score = familyEvidence[(size_t) family];
+        return c;
+    };
+
+    if (! (fb >= dc.familyConfidentScore && fb >= dc.familyDominanceRatio * std::max (fs, 1.0e-9)))
+    {
+        d.status = S::Ambiguous;
+        for (int fam : families)
+            if ((int) d.candidates.size() < dc.maxCandidates && familyEvidence[(size_t) fam] >= dc.presentScore
+                && familyEvidence[(size_t) fam] >= dc.candidateRatio * fb)
+                d.candidates.push_back (representative (fam));
+        d.message = "The instrument family is not clear: " + t.families[(size_t) bestFamily].name + " is only slightly ahead.";
+        return d;
+    }
+
+    const bool strongFamily = fb >= dc.highConfidenceScore && fb >= dc.highDominanceRatio * std::max (fs, 1.0e-9);
+    const auto members = membersOf (bestFamily);
+    const double mb = categoryEvidence[(size_t) members[0]];
+    const double ms = members.size() > 1 ? categoryEvidence[(size_t) members[1]] : 0.0;
+    const bool memberLeads = members.size() == 1
+                          || (mb >= dc.memberConfidentScore && mb >= dc.memberDominanceRatio * std::max (ms, 1.0e-9));
+
+    // --- Stage 2a: drums: the piece comes from the sound -------------------------------
+    if (bestFamily == drums)
+    {
+        // Hand percussion and mallets are better recognised by the model than by the drum rules.
+        const int perc = t.categoryIndex ("percussion");
+        double kitPieces = 0.0;
+        for (const char* id : { "kick", "snare", "toms" })
+            if (const int i = t.categoryIndex (id); i >= 0)
+                kitPieces = std::max (kitPieces, categoryEvidence[(size_t) i]);
+        if (perc >= 0 && categoryEvidence[(size_t) perc] >= t.drumRules.modelPercussionScore
+            && categoryEvidence[(size_t) perc] >= 2.0 * std::max (kitPieces, 1.0e-9))
+        {
+            d.status = S::Detected;
+            d.confidence = strongFamily ? C::High : C::Medium;
+            auto c = refine (perc);
+            c.note = "the model hears hand percussion or mallets";
+            d.candidates.push_back (c);
+            return d;
+        }
+
+        const auto est = estimateDrumPiece (t.drumRules, f, rf.rackFloorTomSplitHz);
+        if (est.piece != Instrument::Unknown)
+        {
+            InstrumentCandidate c;
+            c.instrument = est.piece;
+            c.categoryId = "drums";
+            c.score = fb;
+            c.note = est.note;
+            d.status = S::Detected;
+            // The model agreeing on the piece (e.g. cymbals) raises the confidence.
+            const bool modelAgrees = memberLeads && instrumentForCategory (t.categories[(size_t) members[0]].id) == est.piece;
+            d.confidence = modelAgrees && strongFamily ? C::High : C::Medium;
+            d.candidates.push_back (c);
+            return d;
+        }
+
+        d.status = S::Ambiguous;
+        for (auto inst : est.candidates)
+        {
+            InstrumentCandidate c;
+            c.instrument = inst;
+            c.categoryId = "drums";
+            c.score = fb;
+            c.note = est.note;
+            d.candidates.push_back (c);
+        }
+        if (d.candidates.empty())
+        {
+            InstrumentCandidate c;
+            c.instrument = Instrument::Drums;
+            c.categoryId = "drums";
+            c.score = fb;
+            d.candidates.push_back (c);
+        }
+        d.message = "Clearly drums, but the drum type is not certain" + (est.note.isNotEmpty() ? " (" + est.note + ")." : juce::String ("."));
+        return d;
+    }
+
+    // --- Stage 2b: other families: the model's specific classes -------------------------
+    if (memberLeads)
     {
         d.status = S::Detected;
-        d.confidence = (best >= dc.highConfidenceScore && best >= dc.highDominanceRatio * std::max (second, 1.0e-9))
-                         ? InstrumentDetection::Confidence::High : InstrumentDetection::Confidence::Medium;
-        d.candidates.push_back (refine (order[0]));
-        // Keep runners-up for transparency.
-        for (size_t i = 1; i < order.size() && (int) d.candidates.size() < dc.maxCandidates; ++i)
-            if (evidence[order[i]] >= dc.presentScore)
-                d.candidates.push_back (refine (order[i]));
+        d.confidence = strongFamily && (members.size() == 1 || mb >= dc.highDominanceRatio * std::max (ms, 1.0e-9)) ? C::High : C::Medium;
+        d.candidates.push_back (refine (members[0]));
+        for (size_t i = 1; i < members.size() && (int) d.candidates.size() < dc.maxCandidates; ++i)
+            if (categoryEvidence[(size_t) members[i]] >= dc.presentScore)
+                d.candidates.push_back (refine (members[i]));
         return d;
     }
 
     d.status = S::Ambiguous;
-    d.confidence = InstrumentDetection::Confidence::Low;
-    for (size_t i = 0; i < order.size() && (int) d.candidates.size() < dc.maxCandidates; ++i)
-        if (evidence[order[i]] >= dc.presentScore && evidence[order[i]] >= dc.candidateRatio * best)
-            d.candidates.push_back (refine (order[i]));
-    d.message = "Several instruments are plausible; the evidence does not single one out.";
+    for (int m : members)
+        if ((int) d.candidates.size() < dc.maxCandidates && (d.candidates.empty() || categoryEvidence[(size_t) m] >= dc.candidateRatio * mb))
+            d.candidates.push_back (refine (m));
+    d.message = "Clearly " + t.families[(size_t) bestFamily].name.toLowerCase() + ", but which instrument is not certain.";
     return d;
 }
 

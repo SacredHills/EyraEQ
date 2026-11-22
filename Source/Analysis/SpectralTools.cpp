@@ -128,7 +128,7 @@ double medianDbAround (const std::vector<double>& db, int bin, double binHz, dou
     return *mid;
 }
 
-bool Context::isActiveAt (int sample, int length) const
+bool Context::isActiveAt (int sample, int length, double minFraction) const
 {
     if (gateBlock <= 0)
         return false;
@@ -137,7 +137,7 @@ bool Context::isActiveAt (int sample, int length) const
     int active = 0, total = 0;
     for (int b = b0; b <= b1; ++b, ++total)
         active += activeBlock[(size_t) b] ? 1 : 0;
-    return total > 0 && active * 2 >= total;
+    return total > 0 && active > 0 && active >= minFraction * total;
 }
 
 int Context::bandIndexFor (double hz) const

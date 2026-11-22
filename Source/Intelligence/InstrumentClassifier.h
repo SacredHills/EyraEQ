@@ -12,21 +12,37 @@
 namespace eyra::intelligence
 {
 
-/** Instrument categories as defined by Models/instrument_taxonomy.json. */
+/** Instrument families and categories as defined by Models/instrument_taxonomy.json. */
 struct Taxonomy
 {
-    struct Category
+    struct Group
     {
         juce::String id, name;
+        int family = -1;                             // categories: index into families
         std::vector<std::pair<int, double>> classes; // label index, weight
+        /** Generic impact sounds (e.g. "Knock", "Thump") that count only when the analysis measured regular hits. */
+        std::vector<std::pair<int, double>> percussiveClasses;
     };
 
     struct Decision
     {
-        double minActiveSeconds = 3.0, presentScore = 0.12, confidentScore = 0.3, highConfidenceScore = 0.5;
-        double dominanceRatio = 1.6, highDominanceRatio = 2.5, candidateRatio = 0.5;
+        double minActiveSeconds = 3.0, presentScore = 0.12;
+        double familyConfidentScore = 0.25, familyDominanceRatio = 1.6;
+        double memberConfidentScore = 0.2, memberDominanceRatio = 2.0;
+        double highConfidenceScore = 0.5, highDominanceRatio = 3.0;
+        double candidateRatio = 0.5;
         int maxCandidates = 3;
     } decision;
+
+    /** Drum piece from the sound (see estimateDrumPiece). */
+    struct DrumRules
+    {
+        double cymbalMinHighShare = 0.4, cymbalMinCentroidHz = 2500.0, cymbalMaxLowShare = 0.05;
+        double kitMinLowShare = 0.2, kitMinHighShare = 0.2;
+        double lowMinShare = 0.5, kickMaxDecaySeconds = 0.22, decayMargin = 0.25;
+        double snareMinFlatness = 0.1, flatnessMargin = 0.35;
+        double modelPercussionScore = 0.3;
+    } drumRules;
 
     struct Refinements
     {
@@ -37,11 +53,35 @@ struct Taxonomy
         double rackFloorTomSplitHz = 110.0, synthBassMaxMedianHz = 140.0;
     } refinements;
 
-    std::vector<Category> categories;
+    std::vector<Group> families, categories;
+
+    int familyIndex (const juce::String& id) const;
+    int categoryIndex (const juce::String& id) const;
 
     /** Parses the JSON and resolves class names against the model's labels. */
     bool parse (const juce::var& json, const juce::StringArray& labels, juce::String& error);
 };
+
+/** Measured sound character used by the decision (from the frequency analysis). */
+struct SoundFeatures
+{
+    analysis::PitchSummary pitch;
+    double lowShare = 0.0, lowMidShare = 0.0, midShare = 0.0, highShare = 0.0;
+    double centroidHz = 0.0, flatness = 0.0, decaySeconds = 0.0;
+    bool percussive = false;
+
+    static SoundFeatures from (const analysis::AnalysisResult&);
+};
+
+/** Result of the drum-piece rules: a piece, or "not certain" between candidates. */
+struct DrumEstimate
+{
+    Instrument piece = Instrument::Unknown;
+    std::vector<Instrument> candidates;
+    juce::String note;
+};
+
+DrumEstimate estimateDrumPiece (const Taxonomy::DrumRules&, const SoundFeatures&, double rackFloorSplitHz);
 
 /**
     Recognises the instrument in a recording with a local model (YAMNet via ONNX Runtime).
@@ -49,13 +89,14 @@ struct Taxonomy
     One shared, lazily initialised instance per process (the model is loaded once, whatever the
     number of plug-in instances). classify() is thread-safe and must not be called from the audio thread.
 
-    The decision does not force an answer:
-      - fewer than minActiveSeconds of signal       -> NeedMoreAudio
-      - best category evidence below presentScore   -> Unknown
-      - best clearly ahead (confidentScore, dominanceRatio) -> Detected (Medium / High confidence)
-      - otherwise                                   -> Ambiguous, with the plausible candidates
-    Refinements that the model cannot make itself (male / female vocal, rack / floor tom, synth bass)
-    use the measured pitch and are labelled as such.
+    Two stages, and no forced answers:
+      1. Family (drums, bass, guitar, vocal, keys, strings & brass, other) from the model. Too little
+         audio -> NeedMoreAudio; weak evidence -> Unknown; no clear family -> Ambiguous.
+      2. Within the family: the model's specific classes if one clearly leads. For drums the piece
+         (kick, snare, tom, cymbals, kit) comes from the measured sound, because the model cannot tell
+         drum pieces apart reliably; borderline measurements give Ambiguous with both candidates.
+    Refinements the model cannot make (male / female vocal, rack / floor tom, synth bass) use the
+    measured pitch. Every decision carries a note saying which evidence it rests on.
 */
 class InstrumentClassifier
 {
@@ -68,11 +109,12 @@ public:
     bool isReady() const;
     juce::String getStatus() const;
 
-    InstrumentDetection classify (const float* mono, int numSamples, double sampleRate, const analysis::PitchSummary& pitch) const;
+    InstrumentDetection classify (const float* mono, int numSamples, double sampleRate, const analysis::AnalysisResult& analysis) const;
 
-    /** Pure decision step, exposed for tests. `evidence` is per category in taxonomy order. */
-    static InstrumentDetection decide (const Taxonomy&, const std::vector<double>& evidence, double distortion,
-                                       double activeSeconds, const analysis::PitchSummary& pitch);
+    /** Pure decision step, exposed for tests. Evidence vectors are in taxonomy order. */
+    static InstrumentDetection decide (const Taxonomy&, const std::vector<double>& familyEvidence,
+                                       const std::vector<double>& categoryEvidence, double distortion,
+                                       double activeSeconds, const SoundFeatures& features);
 
     /** Runs patches through the model; exposed for the reference-vector tests. */
     bool runModel (const std::vector<float>& patches, int numPatches, std::vector<float>& scores, juce::String& error) const;

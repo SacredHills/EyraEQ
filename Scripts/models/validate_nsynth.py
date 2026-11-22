@@ -7,7 +7,7 @@ real performance, and has no drums or vocals of known gender: those are not cove
 
 Usage: python validate_nsynth.py <model_dir> <taxonomy.json> <out_dir> [examples_per_group]
 
-Writes, for the "valid" and "test" splits: per-note category evidence (nsynth-<split>-evidence.json,
+Writes, for the "valid" and "test" splits: per-note family and category evidence (nsynth-<split>-evidence.json,
 used to tune decision thresholds on the valid split only) and a report for the test split
 (nsynth-validation.md). Thresholds are never tuned on the test split.
 """
@@ -24,7 +24,7 @@ import onnxruntime as ort
 import soundfile as sf
 
 sys.path.insert(0, str(Path(__file__).parent))
-from taxonomy import Taxonomy  # noqa: E402
+from taxonomy import Taxonomy, matches  # noqa: E402
 
 NSYNTH_URL = "http://download.magenta.tensorflow.org/datasets/nsynth/nsynth-{split}.jsonwav.tar.gz"
 
@@ -91,9 +91,11 @@ def evaluate(split, session, manifest, mel, taxonomy, per_group):
             scores = session.run([manifest["outputs"]["scores"]], {manifest["input"]["name"]: patches})[0]
             active = taxonomy.active_patches(wave, len(patches))
             active_seconds = 0.96 + 0.48 * (int(active.sum()) - 1) if active.any() else 0.0
-            evidence, distortion = taxonomy.evidence(scores, active)
+            # Single notes are never "regular hits", so the percussive-only classes do not apply.
+            families, categories, distortion = taxonomy.evidence(scores, active, percussive=False)
             records.append({"name": name, "family": key[0], "source": key[1], "expected": EXPECTED[key],
-                            "evidence": evidence, "distortion": distortion, "activeSeconds": active_seconds})
+                            "families": families, "evidence": categories, "distortion": distortion,
+                            "activeSeconds": active_seconds})
     return records
 
 
@@ -107,18 +109,19 @@ def report(records, taxonomy, manifest, taxonomy_name, per_group):
         for r in by_group[key]:
             ev = r["evidence"]
             # Single notes are short; judge them as if long enough (the plug-in requires 3 s of signal).
-            status, cands = taxonomy.decide(ev, taxonomy.decision["minActiveSeconds"])
-            top = max(ev, key=ev.get)
+            status, cands = taxonomy.decide(r["families"], ev, taxonomy.decision["minActiveSeconds"])
             expected = r["expected"]
+            fam = r["families"]
             counts["n"] += 1
-            counts["top1"] += top == expected
+            counts["family_top1"] += max(fam, key=fam.get) == taxonomy.family_of[expected]
             counts[status] += 1
             if status == "detected":
-                counts["detected_correct"] += cands[0] == expected
+                ok = matches(expected, cands[0])
+                counts["detected_correct"] += ok
+                if not ok:
+                    confusions[cands[0]] += 1
             if status == "ambiguous":
-                counts["ambiguous_contains"] += expected in cands
-            if top != expected:
-                confusions[top] += 1
+                counts["ambiguous_contains"] += any(matches(expected, c) for c in cands)
         totals.update(counts)
         rows.append((key, counts, confusions.most_common(2)))
 
@@ -131,23 +134,25 @@ def report(records, taxonomy, manifest, taxonomy_name, per_group):
         "",
         f"Model: {manifest['name']} {manifest['version']} (sha256 {manifest['sha256'][:12]}...). Taxonomy: {taxonomy_name}. "
         f"Up to {per_group} random notes per group (seed 1).",
-        f"Decision thresholds: present {d['presentScore']}, confident {d['confidentScore']}, dominance {d['dominanceRatio']}.",
+        f"Decision thresholds: present {d['presentScore']}; family confident {d['familyConfidentScore']}, dominance {d['familyDominanceRatio']}; "
+        f"member confident {d['memberConfidentScore']}, dominance {d['memberDominanceRatio']}.",
         "",
         "NSynth (Google Magenta, CC BY 4.0): isolated single notes, 4 s at 16 kHz. This is harder than real",
-        "performances and contains no drums and no gender labels for vocals.",
+        "performances and contains no drums and no gender labels for vocals. Drum recognition (model picks the",
+        "family, measurements pick the piece) is tested separately: see Documentation/AI-Models.md.",
         "",
-        "| Family / source | Expected | Notes | Top-1 correct | Detected (confident) | Correct when detected | Ambiguous (contains expected) | Unknown | Most common confusions |",
+        "| Family / source | Expected | Notes | Family top-1 correct | Detected (confident) | Correct when detected | Ambiguous (contains expected) | Unknown | Wrong detections |",
         "|---|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for key, c, conf in rows:
         det = c["detected"]
         lines.append(
-            f"| {key[0]} / {key[1]} | {EXPECTED[key]} | {c['n']} | {pct(c['top1'], c['n'])} | {pct(det, c['n'])} | "
+            f"| {key[0]} / {key[1]} | {EXPECTED[key]} | {c['n']} | {pct(c['family_top1'], c['n'])} | {pct(det, c['n'])} | "
             f"{pct(c['detected_correct'], det)} | {pct(c['ambiguous'], c['n'])} ({pct(c['ambiguous_contains'], c['ambiguous'])}) | "
             f"{pct(c['unknown'], c['n'])} | {', '.join(f'{k} ({v})' for k, v in conf)} |")
     t = totals
     lines += [
-        f"| **All** | | {t['n']} | {pct(t['top1'], t['n'])} | {pct(t['detected'], t['n'])} | {pct(t['detected_correct'], t['detected'])} | "
+        f"| **All** | | {t['n']} | {pct(t['family_top1'], t['n'])} | {pct(t['detected'], t['n'])} | {pct(t['detected_correct'], t['detected'])} | "
         f"{pct(t['ambiguous'], t['n'])} ({pct(t['ambiguous_contains'], t['ambiguous'])}) | {pct(t['unknown'], t['n'])} | |",
         "",
     ]

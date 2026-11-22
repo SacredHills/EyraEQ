@@ -1,39 +1,70 @@
 #!/usr/bin/env python3
 """Chooses the decision thresholds from validation data (never from the test split).
 
-Reads Documentation/Validation/nsynth-valid-evidence.json (written by validate_nsynth.py), searches
-presentScore / confidentScore / dominanceRatio, and picks the setting that detects the most notes
-correctly while "Detected" stays at least --precision correct on the valid split. Then it reports
-the chosen setting once on the test split.
+Reads <validation_dir>/nsynth-valid-evidence.json (written by validate_nsynth.py) and searches the
+family-stage thresholds (presentScore, familyConfidentScore, familyDominanceRatio) and the member-stage
+thresholds (memberConfidentScore, memberDominanceRatio). It picks the setting that detects the most notes
+correctly while "Detected" stays at least --precision correct on the valid split, then reports that
+setting once on the test split.
+
+The drum-piece rules are not tuned here (NSynth has no drums); see Documentation/AI-Models.md.
 
 Usage: python tune_thresholds.py <validation_dir> <taxonomy.json> [--precision 0.9] [--write]
 """
 import argparse
 import itertools
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 
-
-def decide(evidence, present, confident, dominance, candidate_ratio=0.5, max_candidates=3):
-    ranked = sorted(evidence.items(), key=lambda kv: -kv[1])
-    (best, b), (_, second) = ranked[0], ranked[1]
-    if b < present:
-        return "unknown", []
-    if b >= confident and b >= dominance * max(second, 1e-9):
-        return "detected", [best]
-    return "ambiguous", [c for c, v in ranked[:max_candidates] if v >= present and v >= candidate_ratio * b]
+sys.path.insert(0, str(Path(__file__).parent))
+from taxonomy import matches  # noqa: E402
 
 
-def score(records, present, confident, dominance):
+class Mirror:
+    """Just enough of taxonomy.Taxonomy.decide to run without the model's label list."""
+
+    def __init__(self, taxonomy_json):
+        self.family_of = {c["id"]: c["family"] for c in taxonomy_json["categories"]}
+        self.members = {}
+        for cid, fam in self.family_of.items():
+            self.members.setdefault(fam, []).append(cid)
+        self.perc_score = taxonomy_json.get("drumRules", {}).get("modelPercussionScore", 0.3)
+
+    def decide(self, families, categories, d):
+        ranked = sorted(families.items(), key=lambda kv: -kv[1])
+        (best, fb), fs = ranked[0], (ranked[1][1] if len(ranked) > 1 else 0.0)
+        if fb < d["presentScore"]:
+            return "unknown", []
+
+        def sorted_members(fam):
+            return sorted(self.members[fam], key=lambda c: -categories[c])
+
+        if not (fb >= d["familyConfidentScore"] and fb >= d["familyDominanceRatio"] * max(fs, 1e-9)):
+            cands = [("drums" if f == "drums" else sorted_members(f)[0]) for f, v in ranked
+                     if v >= d["presentScore"] and v >= d["candidateRatio"] * fb][: d["maxCandidates"]]
+            return "ambiguous", cands
+        if best == "drums":
+            perc = categories.get("percussion", 0.0)
+            kit = max(categories.get(c, 0.0) for c in ("kick", "snare", "toms"))
+            return "detected", ["percussion" if perc >= self.perc_score and perc >= 2.0 * max(kit, 1e-9) else "drums"]
+        m = sorted_members(best)
+        mb, ms = categories[m[0]], (categories[m[1]] if len(m) > 1 else 0.0)
+        if len(m) == 1 or (mb >= d["memberConfidentScore"] and mb >= d["memberDominanceRatio"] * max(ms, 1e-9)):
+            return "detected", [m[0]]
+        return "ambiguous", [c for i, c in enumerate(m) if i == 0 or categories[c] >= d["candidateRatio"] * mb][: d["maxCandidates"]]
+
+
+def score(mirror, records, d):
     c = Counter()
     for r in records:
-        status, cands = decide(r["evidence"], present, confident, dominance)
+        status, cands = mirror.decide(r["families"], r["evidence"], d)
         c[status] += 1
         if status == "detected":
-            c["correct"] += cands[0] == r["expected"]
+            c["correct"] += matches(r["expected"], cands[0])
         if status == "ambiguous":
-            c["contains"] += r["expected"] in cands
+            c["contains"] += any(matches(r["expected"], x) for x in cands)
     c["n"] = len(records)
     c["precision"] = c["correct"] / c["detected"] if c["detected"] else 0.0
     return c
@@ -47,42 +78,48 @@ def main():
     ap.add_argument("--write", action="store_true", help="write the chosen thresholds into the taxonomy file")
     args = ap.parse_args()
 
+    tax = json.loads(args.taxonomy.read_text())
+    mirror = Mirror(tax)
     valid = json.loads((args.validation_dir / "nsynth-valid-evidence.json").read_text())
     test = json.loads((args.validation_dir / "nsynth-test-evidence.json").read_text())
 
-    presents = [0.05, 0.08, 0.10, 0.12, 0.15, 0.20]
-    confidents = [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70]
-    dominances = [1.2, 1.5, 1.6, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
-
+    grid = {
+        "presentScore": [0.08, 0.10, 0.12, 0.15, 0.20],
+        "familyConfidentScore": [0.20, 0.25, 0.30, 0.40, 0.50],
+        "familyDominanceRatio": [1.2, 1.6, 2.0, 3.0, 4.0],
+        "memberConfidentScore": [0.10, 0.15, 0.20, 0.30, 0.40],
+        "memberDominanceRatio": [1.2, 1.5, 2.0, 3.0, 4.0],
+    }
+    base = dict(tax["decision"])
     best = None
-    for p, c, d in itertools.product(presents, confidents, dominances):
-        if c < p:
+    for values in itertools.product(*grid.values()):
+        d = dict(base, **dict(zip(grid.keys(), values)))
+        if d["familyConfidentScore"] < d["presentScore"]:
             continue
-        s = score(valid, p, c, d)
+        s = score(mirror, valid, d)
         if s["detected"] < 10 or s["precision"] < args.precision:
             continue
-        # Most correct detections; among equals, the most notes that are not wrongly "unknown".
+        # Most correct detections; among equals, the most notes that end with the right answer offered.
         key = (s["correct"], s["contains"] + s["correct"])
         if best is None or key > best[0]:
-            best = (key, (p, c, d), s)
+            best = (key, d, s)
 
     if best is None:
         print(f"No setting reaches {args.precision:.0%} precision on the valid split.")
         return
-    _, (p, c, d), s = best
-    t = score(test, p, c, d)
+    _, d, s = best
+    t = score(mirror, test, d)
 
     def line(name, s):
         return (f"{name}: detected {s['detected']}/{s['n']} ({s['detected'] / s['n']:.0%}), correct when detected {s['precision']:.0%}, "
                 f"ambiguous {s['ambiguous']} (contains expected {s['contains']}), unknown {s['unknown']}")
 
-    print(f"chosen: presentScore={p} confidentScore={c} dominanceRatio={d}")
+    print("chosen:", ", ".join(f"{k}={d[k]}" for k in grid))
     print(line("valid", s))
     print(line("test ", t))
 
     if args.write:
-        tax = json.loads(args.taxonomy.read_text())
-        tax["decision"].update({"presentScore": p, "confidentScore": c, "dominanceRatio": d})
+        tax["decision"].update({k: d[k] for k in grid})
         tax["decision"]["calibration"] = (f"Tuned on the NSynth valid split for >= {args.precision:.0%} precision of 'Detected' "
                                           f"(Scripts/models/tune_thresholds.py); test split: {t['precision']:.0%} correct when detected.")
         args.taxonomy.write_text(json.dumps(tax, indent=2) + "\n")

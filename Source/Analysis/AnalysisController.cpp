@@ -244,7 +244,7 @@ void AnalysisController::runAnalysis (const float* data, int numSamples, double 
     {
         setStatus ("Recognising the instrument...");
         if (classifier->ensureInitialised())
-            r->instrument = classifier->classify (data, numSamples, rate, r->pitch);
+            r->instrument = classifier->classify (data, numSamples, rate, *r);
         else
         {
             r->instrument.status = Status::Unavailable;

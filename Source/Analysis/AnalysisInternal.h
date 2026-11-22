@@ -77,7 +77,9 @@ struct Context
     int gateBlock = 0;
     std::vector<bool> activeBlock;
     double activeSeconds = 0.0;
-    bool isActiveAt (int sample, int length) const;
+    /** True if more than minFraction of the gate blocks in [sample, sample + length) hold signal
+        (at least half by default; 0 = any). */
+    bool isActiveAt (int sample, int length, double minFraction = 0.5) const;
 
     // Short-time analysis (~85 ms window, ~10.7 ms hop): transients, decay, pitch
     int shortSize = 0, shortHop = 0;

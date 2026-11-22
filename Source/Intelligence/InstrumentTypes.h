@@ -35,6 +35,7 @@ enum class Instrument : int
     Strings,
     Brass,
     AcousticInstrument,
+    Drums,              // drums / percussion, piece not determined
     NumInstruments
 };
 

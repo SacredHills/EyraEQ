@@ -242,6 +242,20 @@ if(EYRA_BUILD_TESTS)
     endif()
     set_tests_properties(EyraEQTests PROPERTIES ENVIRONMENT "${_eyra_test_env}")
 
+    # Command-line analyser: the plug-in's real analysis + recognition on audio files.
+    juce_add_console_app(EyraEQAnalyze PRODUCT_NAME "EyraEQAnalyze")
+    target_sources(EyraEQAnalyze PRIVATE ${EYRA_SOURCES} Tools/AnalyzeMain.cpp)
+    target_include_directories(EyraEQAnalyze PRIVATE Source ThirdParty/onnxruntime/include)
+    target_compile_definitions(EyraEQAnalyze PRIVATE
+        ${EYRA_COMPILE_DEFINITIONS}
+        JucePlugin_Name="EyraEQ"
+        JucePlugin_VersionString="${PROJECT_VERSION}")
+    target_link_libraries(EyraEQAnalyze PRIVATE
+        EyraEQ_BinaryData
+        ${EYRA_JUCE_MODULES}
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
     # Loads the built VST3 through JUCE's VST3 host, as a DAW would.
     juce_add_console_app(EyraEQHostTest PRODUCT_NAME "EyraEQHostTest")
     target_sources(EyraEQHostTest PRIVATE Tests/HostTest.cpp)
