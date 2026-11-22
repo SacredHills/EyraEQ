@@ -1,8 +1,8 @@
 # EyraEQ
 
-A professional parametric equalizer (VST3 + Standalone) with planned on-device intelligent
-instrument detection and corrective EQ. The EQ is the product; the intelligent features are being
-added on top of it in later phases and will always remain optional.
+A professional parametric equalizer (VST3 + Standalone) with built-in audio analysis and corrective
+EQ: choose the instrument, let EyraEQ listen, and it proposes real EQ bands for the problem
+frequencies it measured. The EQ is the product; the correction features are optional.
 
 The full product specification lives in [DEVELOPMENT_PROMPT.md](DEVELOPMENT_PROMPT.md).
 
@@ -14,12 +14,11 @@ The full product specification lives in [DEVELOPMENT_PROMPT.md](DEVELOPMENT_PROM
 |------:|-------|--------|
 | 1 | Functional EQ: JUCE/CMake project, VST3 + Standalone, EQ engine, spectrum analyser, UI, presets, A/B, undo, bypass | **Done.** Builds, tests and pluginval (strictness 10) pass on Linux, macOS and Windows (see [testing report](Documentation/TestingReport.md)). |
 | 2 | Audio analysis: problem-frequency and resonance detection, analysis buffer | **Done.** Listen-then-analyse workflow, detection of resonances, ringing, hum, build-ups, rumble and DC, shown in a collapsible panel and on the spectrum (see [Analysis](Documentation/Analysis.md)). |
-| 3 | Instrument recognition (ONNX Runtime, local model) | **Done, with measured limits.** Local YAMNet model (Apache 2.0) via ONNX Runtime, verified against Google's reference; drums: the model detects drums, measurements decide kick / snare / tom / cymbals; pitched instruments 84% correct when "detected" (NSynth test split); manual choice always available. Real stems not yet validated (see [AI-Models](Documentation/AI-Models.md)). |
-| 4 | Intelligent corrective EQ generating real bands | Not started |
+| 3 | Instrument recognition | **Dropped at the owner's request.** Automatic recognition (a local YAMNet model) was built and measured, but was not reliable enough on real tracks; the user now chooses the instrument. No ONNX Runtime or model files are needed. |
+| 4 | Corrective EQ generating real bands | **Done.** Instrument-aware corrections from the measured problems: Gentle / Moderate / Aggressive, Transparent / Polished, amount, number of bands, Preserve character, auto high-pass; applied automatically or approved one by one; undoable (see [Correction](Documentation/Correction.md)). |
 | 5 | Dynamic EQ, resonance suppression, advanced analyser options | Not started (M/S and per-band stereo placement were brought forward into Phase 1) |
 | 6 | Installers (.exe, .dmg/.pkg, .AppImage/.deb), signing, DAW compatibility testing | Not started |
 
-Phase 2 detects and explains problems; it does not change EQ settings yet (that is Phase 4).
 
 ## What works now (Phase 1)
 
@@ -66,17 +65,18 @@ Phase 2 detects and explains problems; it does not change EQ settings yet (that 
   average spectrum of the analysed audio.
 - All analysis runs on a worker thread; the audio thread is unaffected (verified by tests).
 
-## What works now (Phase 3)
+## What works now (Phase 4): corrective EQ
 
-- After an analysis, EyraEQ recognises the instrument locally (YAMNet via ONNX Runtime, no internet).
-- Shows the detected instrument and its confidence, or "not certain" with candidates, or "not
-  recognised". It never presents a weak guess as fact. The instrument can always be chosen manually,
-  and that choice is saved with the session.
-- Vocal gender, rack/floor tom and synth bass are refined from the measured pitch, and clean/distorted
-  guitar from the model's distortion class; the panel says which evidence was used.
-- The model is verified against Google's TensorFlow reference at build time and self-tested when it
-  loads. Damaged or missing models (or runtime) only disable recognition.
-- Newer models can be installed in the user model folder (validated before use).
+1. Choose the instrument (24 choices, or General).
+2. Play the track and press **Analyze** (or analyse a file in the standalone app).
+3. Every finding shows the proposed move ("Cut 3.5 dB at 824 Hz, Q 8") or why it is left alone.
+   Tick the ones you want and press **Apply corrections**, or turn on *Apply automatically*.
+4. The corrections are ordinary EQ bands on the main display: adjust, bypass or delete them.
+   **Reset** removes them; everything is undoable.
+
+Controls: Transparent (cuts only) or Polished (plus subtle enhancement where nothing is wrong);
+Gentle / Moderate / Aggressive; Amount (0–150%); Max bands (1–12); Preserve character (smaller or no
+cuts in regions that make up the instrument's sound); Auto high-pass (kept below the lowest notes).
 
 ## Building
 
@@ -116,25 +116,24 @@ Source/
   DSP/          filter design, band, engine (no JUCE GUI dependencies)
   Analysis/     spectrum analyser, audio analysis (pitch, transients, tonal balance,
                 resonances) and the capture / worker controller
-  Intelligence/ ONNX Runtime loader, model manager, feature extractor, instrument classifier
+  Correction/   instrument profiles and the correction generator (findings -> EQ bands)
   Parameters/   parameter layout and lock-free parameter reader
   State/        presets, undo history, A/B
   UI/           look and feel, spectrum display, band panel, top bar
   PluginProcessor.*, PluginEditor.*
 Resources/FactoryPresets/   generated by Scripts/generate_factory_presets.py
 Tests/          unit tests and the VST3 host test
-Scripts/        build scripts; models/ = model conversion, validation and calibration
-Models/         instrument model (YAMNet ONNX, manifest, reference vectors) and the instrument taxonomy
-ThirdParty/     ONNX Runtime C API headers
-Documentation/  architecture, DSP, analysis, AI models, building, testing report, validation data
+Tools/          EyraEQAnalyze: the plug-in's analysis and corrections on audio files (command line)
+Scripts/        build scripts, factory preset generator
+Documentation/  architecture, DSP, analysis, correction, building, testing report
 ```
 
 ## Licensing notes
 
 EyraEQ is licensed under the **GNU AGPL v3.0** (`LICENSE`), matching its use of [JUCE](https://juce.com)
 under JUCE's free AGPLv3 licence. Anyone who distributes EyraEQ (including binaries) must make the
-complete corresponding source code available under the same terms. Third-party components (VST3 SDK,
-ONNX Runtime, the YAMNet model) and their licences are listed in
+complete corresponding source code available under the same terms. Third-party components and their
+licences are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 "VST" is a trademark of Steinberg Media Technologies GmbH.

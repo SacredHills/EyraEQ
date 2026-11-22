@@ -2,6 +2,7 @@
 
 #include "Analysis/AnalysisController.h"
 #include "Analysis/SpectrumAnalyzer.h"
+#include "Correction/CorrectionGenerator.h"
 #include "DSP/EQEngine.h"
 #include "Parameters/Parameters.h"
 #include "State/ABComparison.h"
@@ -68,11 +69,25 @@ public:
     eyra::state::ABComparison ab;
     eyra::state::PresetManager presets;
 
-    /** Instrument chosen by the user (-1 = automatic). Saved with the session, not automatable. */
-    std::atomic<int> instrumentOverride { -1 };
+    //==============================================================================
+    // Corrective EQ (message thread). Settings are saved with the session, not automatable.
+    eyra::correction::Settings getCorrectionSettings() const;
+    void setCorrectionSettings (const eyra::correction::Settings&);
 
-    /** The user's choice, otherwise the detected instrument (Unknown if neither). */
-    eyra::intelligence::Instrument getEffectiveInstrument() const;
+    /** Suggestions for the latest analysis with the current settings (empty if there is none). */
+    std::vector<eyra::correction::Suggestion> getSuggestions() const;
+
+    /**
+        Writes the bands into free EQ band slots as one undoable edit, replacing bands written by the
+        previous call. Returns how many were placed (fewer if the EQ ran out of free bands).
+    */
+    int applyCorrections (const std::vector<eyra::dsp::BandParams>& bands);
+
+    /** Removes the bands written by applyCorrections, as one undoable edit. */
+    void resetCorrections();
+
+    /** Band slots currently holding generated corrections. */
+    std::vector<int> getCorrectionSlots() const;
 
     /** Band currently soloed for audition (-1 = none). Not saved, not automatable. */
     std::atomic<int> soloBand { -1 };
@@ -105,6 +120,11 @@ private:
 
     mutable juce::CriticalSection uiStateLock;
     EyraUIState uiState;
+
+    mutable juce::CriticalSection correctionLock;
+    eyra::correction::Settings correctionSettings;
+    std::vector<int> correctionSlots;
+    void clearCorrectionSlots();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EyraEQAudioProcessor)
 };

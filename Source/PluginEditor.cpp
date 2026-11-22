@@ -6,7 +6,7 @@ namespace
 {
     constexpr int kTopBarHeight = 46;
     constexpr int kBandPanelHeight = 132;
-    constexpr int kAnalysisPanelWidth = 300;
+    constexpr int kAnalysisPanelWidth = 330;
     constexpr int kMinWidth = 860, kMinHeight = 520;
     constexpr int kMaxWidth = 3200, kMaxHeight = 2000;
 } // namespace
@@ -127,9 +127,9 @@ void EyraEQAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
     topBar.setBounds (area.removeFromTop (kTopBarHeight));
-    bandPanel.setBounds (area.removeFromBottom (kBandPanelHeight));
     if (analysisPanel.isVisible())
-        analysisPanel.setBounds (area.removeFromRight (kAnalysisPanelWidth));
+        analysisPanel.setBounds (area.removeFromRight (kAnalysisPanelWidth)); // full height: room for the correction list
+    bandPanel.setBounds (area.removeFromBottom (kBandPanelHeight));
     display.setBounds (area);
     saveOverlay.setBounds (getLocalBounds());
 

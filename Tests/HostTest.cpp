@@ -82,17 +82,14 @@ int main (int argc, char* argv[])
     fm.addFormat (std::make_unique<juce::VST3PluginFormat>());
     auto* vst3 = fm.getFormat (0);
 
-    // --- Bundle contents: instrument recognition runtime and model ---------------------------
+    // --- Bundle contents: a single self-contained plug-in, no extra libraries or model files ---
     {
         const auto contents = bundle.getChildFile ("Contents");
-        const auto resources = contents.getChildFile ("Resources").getChildFile ("Models");
-        check (resources.getChildFile ("yamnet").getChildFile ("manifest.json").existsAsFile(), "bundle contains the instrument model");
-        check (resources.getChildFile ("yamnet").getChildFile ("yamnet.onnx").existsAsFile(), "bundle contains yamnet.onnx");
-        check (resources.getChildFile ("instrument_taxonomy.json").existsAsFile(), "bundle contains the instrument taxonomy");
-        bool runtimeFound = false;
+        bool extraLibrary = false;
         for (const auto& f : contents.findChildFiles (juce::File::findFiles, true, "*onnxruntime*"))
-            runtimeFound |= f.getFileName().containsIgnoreCase ("onnxruntime") && ! f.getFileName().endsWith (".h");
-        check (runtimeFound, "bundle contains the ONNX Runtime library");
+            extraLibrary = extraLibrary || f.existsAsFile();
+        check (! extraLibrary, "bundle needs no ONNX Runtime library");
+        check (! contents.getChildFile ("Resources").getChildFile ("Models").exists(), "bundle needs no model files");
     }
 
     // --- Scan ------------------------------------------------------------------------------

@@ -2,6 +2,23 @@
 
 Newest phase first.
 
+## Phase 4: corrective EQ (2026-11-22, branch `phase-4-corrective-eq`)
+
+Automatic instrument recognition (Phase 3) was removed at the owner's request; the user chooses the
+instrument. The plug-in no longer needs ONNX Runtime or model files (the host test checks the bundle
+contains neither).
+
+| Suite | Result |
+|---|---|
+| `EyraEQTests` (Release) | **434 checks passed, 0 failed**, including 11 corrective-EQ test groups |
+| `EyraEQHostTest` (Release) | **33 passed** |
+
+What the correction tests cover is listed in [Correction.md](Correction.md#testing). Not yet tested:
+correction quality on real multitrack recordings (the tests use synthetic signals with known
+problems), and the panel in real DAWs.
+
+The Phase 3 section below is kept for the record; that code is no longer part of the plug-in.
+
 ## Phase 3: instrument recognition (2026-11-21, branch `phase-3-instrument-recognition`)
 
 ### Update: drum recognition fix (2026-11-22)

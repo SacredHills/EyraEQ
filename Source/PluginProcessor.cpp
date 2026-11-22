@@ -8,7 +8,7 @@ namespace
     const juce::Identifier uiType { "UIState" };
     const juce::Identifier versionProp { "version" };
     const juce::Identifier presetProp { "preset" };
-    const juce::Identifier instrumentProp { "instrumentOverride" };
+    const juce::Identifier correctionSlotsProp { "correctionBands" };
 
     juce::ValueTree uiStateToTree (const EyraUIState& s)
     {
@@ -121,14 +121,82 @@ juce::AudioProcessorEditor* EyraEQAudioProcessor::createEditor()
     return new EyraEQAudioProcessorEditor (*this);
 }
 
-eyra::intelligence::Instrument EyraEQAudioProcessor::getEffectiveInstrument() const
+//==============================================================================
+eyra::correction::Settings EyraEQAudioProcessor::getCorrectionSettings() const
 {
-    const int manual = instrumentOverride.load();
-    if (manual > 0)
-        return (eyra::intelligence::Instrument) manual;
+    const juce::ScopedLock lock (correctionLock);
+    return correctionSettings;
+}
+
+void EyraEQAudioProcessor::setCorrectionSettings (const eyra::correction::Settings& s)
+{
+    const juce::ScopedLock lock (correctionLock);
+    correctionSettings = s;
+}
+
+std::vector<eyra::correction::Suggestion> EyraEQAudioProcessor::getSuggestions() const
+{
     if (const auto r = analysis.getResult())
-        return r->instrument.instrument();
-    return eyra::intelligence::Instrument::Unknown;
+        return eyra::correction::generateCorrections (*r, getCorrectionSettings());
+    return {};
+}
+
+std::vector<int> EyraEQAudioProcessor::getCorrectionSlots() const
+{
+    const juce::ScopedLock lock (correctionLock);
+    return correctionSlots;
+}
+
+void EyraEQAudioProcessor::clearCorrectionSlots()
+{
+    using eyra::params::BandField;
+    for (int slot : getCorrectionSlots())
+        if (slot >= 0 && slot < eyra::params::kNumBands && reader.readBand (slot).used)
+        {
+            eyra::params::setParameterValue (apvts, eyra::params::bandParamID (slot, BandField::Used), 0.0f);
+            eyra::params::setParameterValue (apvts, eyra::params::bandParamID (slot, BandField::Gain), 0.0f);
+        }
+    const juce::ScopedLock lock (correctionLock);
+    correctionSlots.clear();
+}
+
+int EyraEQAudioProcessor::applyCorrections (const std::vector<eyra::dsp::BandParams>& bands)
+{
+    using eyra::params::BandField;
+    history.beginEdit();
+    const eyra::state::EditHistory::ScopedSuspend suspend (history);
+
+    clearCorrectionSlots();
+
+    std::vector<int> slots;
+    size_t next = 0;
+    for (int slot = 0; slot < eyra::params::kNumBands && next < bands.size(); ++slot)
+    {
+        if (reader.readBand (slot).used)
+            continue;
+        const auto& b = bands[next++];
+        auto set = [&] (BandField field, float value) { eyra::params::setParameterValue (apvts, eyra::params::bandParamID (slot, field), value); };
+        set (BandField::Type, (float) (int) b.type);
+        set (BandField::Frequency, (float) b.frequency);
+        set (BandField::Gain, (float) b.gainDb);
+        set (BandField::Q, (float) b.q);
+        set (BandField::Slope, (float) b.slopeIndex);
+        set (BandField::Placement, (float) (int) b.placement);
+        set (BandField::Bypass, 0.0f);
+        set (BandField::Used, 1.0f);
+        slots.push_back (slot);
+    }
+
+    const juce::ScopedLock lock (correctionLock);
+    correctionSlots = slots;
+    return (int) slots.size();
+}
+
+void EyraEQAudioProcessor::resetCorrections()
+{
+    history.beginEdit();
+    const eyra::state::EditHistory::ScopedSuspend suspend (history);
+    clearCorrectionSlots();
 }
 
 juce::AudioProcessorParameter* EyraEQAudioProcessor::getBypassParameter() const
@@ -154,7 +222,14 @@ void EyraEQAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     juce::ValueTree root (stateType);
     root.setProperty (versionProp, 1, nullptr);
     root.setProperty (presetProp, presets.getCurrentPresetName(), nullptr);
-    root.setProperty (instrumentProp, instrumentOverride.load(), nullptr);
+    {
+        const juce::ScopedLock lock (correctionLock);
+        juce::StringArray slots;
+        for (int s : correctionSlots)
+            slots.add (juce::String (s));
+        root.setProperty (correctionSlotsProp, slots.joinIntoString (","), nullptr);
+        root.appendChild (correctionSettings.toValueTree(), nullptr);
+    }
     root.appendChild (apvts.copyState(), nullptr);
     root.appendChild (uiStateToTree (getUIState()), nullptr);
     root.appendChild (ab.toValueTree(), nullptr);
@@ -180,8 +255,14 @@ void EyraEQAudioProcessor::setStateInformation (const void* data, int sizeInByte
     setUIState (uiStateFromTree (root.getChildWithName (uiType)));
     ab.fromValueTree (root.getChildWithName ("ABComparison"));
     presets.setCurrentPresetName (root.getProperty (presetProp, "Default").toString());
-    const int instrument = root.getProperty (instrumentProp, -1);
-    instrumentOverride = (instrument > 0 && instrument < (int) eyra::intelligence::Instrument::NumInstruments) ? instrument : -1;
+    {
+        const juce::ScopedLock lock (correctionLock);
+        correctionSettings = eyra::correction::Settings::fromValueTree (root.getChildWithName ("Correction"));
+        correctionSlots.clear();
+        for (const auto& s : juce::StringArray::fromTokens (root.getProperty (correctionSlotsProp, "").toString(), ",", ""))
+            if (s.isNotEmpty() && s.getIntValue() >= 0 && s.getIntValue() < eyra::params::kNumBands)
+                correctionSlots.push_back (s.getIntValue());
+    }
 }
 
 //==============================================================================

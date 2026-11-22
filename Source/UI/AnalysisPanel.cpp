@@ -46,37 +46,69 @@ namespace
 } // namespace
 
 //==============================================================================
-FindingsList::FindingsList (EditorContext& context) : ctx (context) {}
+SuggestionList::SuggestionList (EditorContext& context) : ctx (context) {}
 
-void FindingsList::setFindings (std::shared_ptr<const AnalysisResult> r)
+void SuggestionList::setSuggestions (std::shared_ptr<const AnalysisResult> r, std::vector<correction::Suggestion> s)
 {
     result = std::move (r);
+    suggestions = std::move (s);
+    checked.assign (suggestions.size(), true);
     hovered = -1;
     repaint();
 }
 
-int FindingsList::rowHeight (int index, int width) const
+std::vector<dsp::BandParams> SuggestionList::checkedBands() const
 {
-    const auto& f = result->findings[(size_t) index];
-    return 22 + (int) std::ceil (detailLayout (f.detail, (float) (width - 22)).getHeight()) + kRowPadding;
+    std::vector<dsp::BandParams> bands;
+    for (size_t i = 0; i < suggestions.size(); ++i)
+        if (checked[i] && suggestions[i].band)
+            bands.push_back (*suggestions[i].band);
+    return bands;
 }
 
-int FindingsList::getIdealHeight (int width) const
+int SuggestionList::numChecked() const { return (int) checkedBands().size(); }
+
+juce::String SuggestionList::headingFor (int index) const
 {
-    if (result == nullptr)
-        return 0;
+    const auto& sg = suggestions[(size_t) index];
+    if (result != nullptr && sg.findingIndex >= 0 && sg.findingIndex < (int) result->findings.size())
+        return result->findings[(size_t) sg.findingIndex].title;
+    switch (sg.kind)
+    {
+        case correction::Suggestion::Kind::HighPass:    return "High-pass";
+        case correction::Suggestion::Kind::Enhancement: return "Polish";
+        case correction::Suggestion::Kind::Cut:
+        case correction::Suggestion::Kind::LeftAlone:   break;
+    }
+    return "Correction";
+}
+
+juce::String SuggestionList::detailFor (int index) const
+{
+    const auto& sg = suggestions[(size_t) index];
+    juce::String d;
+    if (result != nullptr && sg.findingIndex >= 0 && sg.findingIndex < (int) result->findings.size())
+        d = result->findings[(size_t) sg.findingIndex].detail + "\n";
+    return d + sg.reason;
+}
+
+int SuggestionList::rowHeight (int index, int width) const
+{
+    return 38 + (int) std::ceil (detailLayout (detailFor (index), (float) (width - 22)).getHeight()) + kRowPadding;
+}
+
+int SuggestionList::getIdealHeight (int width) const
+{
     int h = 0;
-    for (int i = 0; i < (int) result->findings.size(); ++i)
+    for (int i = 0; i < (int) suggestions.size(); ++i)
         h += rowHeight (i, width);
     return h;
 }
 
-int FindingsList::rowAt (int y) const
+int SuggestionList::rowAt (int y) const
 {
-    if (result == nullptr)
-        return -1;
     int top = 0;
-    for (int i = 0; i < (int) result->findings.size(); ++i)
+    for (int i = 0; i < (int) suggestions.size(); ++i)
     {
         const int h = rowHeight (i, getWidth());
         if (y >= top && y < top + h)
@@ -86,18 +118,18 @@ int FindingsList::rowAt (int y) const
     return -1;
 }
 
-void FindingsList::paint (juce::Graphics& g)
+void SuggestionList::paint (juce::Graphics& g)
 {
-    if (result == nullptr)
-        return;
-
+    using K = correction::Suggestion::Kind;
     int top = 0;
-    for (int i = 0; i < (int) result->findings.size(); ++i)
+    for (int i = 0; i < (int) suggestions.size(); ++i)
     {
-        const auto& f = result->findings[(size_t) i];
+        const auto& sg = suggestions[(size_t) i];
+        const auto* finding = (result != nullptr && sg.findingIndex >= 0 && sg.findingIndex < (int) result->findings.size())
+                                  ? &result->findings[(size_t) sg.findingIndex] : nullptr;
         const int h = rowHeight (i, getWidth());
         auto row = juce::Rectangle<int> (0, top, getWidth(), h);
-        const bool selected = ctx.selectedFinding == i;
+        const bool selected = finding != nullptr && ctx.selectedFinding == sg.findingIndex;
 
         if (selected || hovered == i)
         {
@@ -105,24 +137,47 @@ void FindingsList::paint (juce::Graphics& g)
             g.fillRoundedRectangle (row.reduced (2, 1).toFloat(), 4.0f);
         }
 
-        const auto colour = colourForSeverity (f.severityLabel());
+        const auto colour = finding != nullptr ? colourForSeverity (finding->severityLabel()) : colours::accent;
         g.setColour (colour);
         g.fillRoundedRectangle ((float) row.getX() + 6.0f, (float) top + 7.0f, 3.0f, (float) h - 14.0f, 1.5f);
 
         auto content = row.withTrimmedLeft (16).withTrimmedRight (6).withTrimmedTop (5);
         auto titleRow = content.removeFromTop (16);
-        g.setFont (uiFont (10.5f));
-        g.setColour (colour);
-        const juce::String tag = severityName (f.severityLabel()) + "  " + juce::String (juce::roundToInt (100.0 * f.confidence)) + "%";
-        const int tagW = juce::GlyphArrangement::getStringWidthInt (uiFont (10.5f), tag) + 4;
-        g.drawText (tag, titleRow.removeFromRight (tagW), juce::Justification::centredRight, false);
-
+        if (finding != nullptr)
+        {
+            g.setFont (uiFont (10.5f));
+            g.setColour (colour);
+            const juce::String tag = severityName (finding->severityLabel()) + "  " + juce::String (juce::roundToInt (100.0 * finding->confidence)) + "%";
+            const int tagW = juce::GlyphArrangement::getStringWidthInt (uiFont (10.5f), tag) + 4;
+            g.drawText (tag, titleRow.removeFromRight (tagW), juce::Justification::centredRight, false);
+        }
         g.setFont (uiFont (13.0f, true));
         g.setColour (colours::text);
-        g.drawFittedText (f.title, titleRow, juce::Justification::centredLeft, 1);
+        g.drawFittedText (headingFor (i), titleRow, juce::Justification::centredLeft, 1);
+
+        // The proposed move, with a tick box when there is one.
+        auto actionRow = content.removeFromTop (18);
+        if (sg.band)
+        {
+            auto box = actionRow.removeFromLeft (14).withSizeKeepingCentre (12, 12).toFloat();
+            g.setColour (checked[(size_t) i] ? colours::accent : colours::outline);
+            g.drawRoundedRectangle (box, 2.5f, 1.2f);
+            if (checked[(size_t) i])
+            {
+                juce::Path tick;
+                tick.startNewSubPath (box.getX() + 2.5f, box.getCentreY());
+                tick.lineTo (box.getX() + 5.0f, box.getBottom() - 3.0f);
+                tick.lineTo (box.getRight() - 2.5f, box.getY() + 3.0f);
+                g.strokePath (tick, juce::PathStrokeType (1.6f));
+            }
+            actionRow.removeFromLeft (5);
+        }
+        g.setFont (uiFont (12.0f, true));
+        g.setColour (sg.kind == K::LeftAlone ? colours::textFaint : (sg.kind == K::Enhancement ? colours::accent.brighter (0.3f) : colours::accent));
+        g.drawFittedText (sg.band ? sg.title : "No EQ: " + sg.title.toLowerCase(), actionRow, juce::Justification::centredLeft, 1);
 
         content.removeFromTop (1);
-        detailLayout (f.detail, (float) content.getWidth()).draw (g, content.toFloat());
+        detailLayout (detailFor (i), (float) content.getWidth()).draw (g, content.toFloat());
 
         g.setColour (colours::outline.withAlpha (0.5f));
         g.drawHorizontalLine (top + h - 1, 10.0f, (float) getWidth() - 6.0f);
@@ -130,7 +185,7 @@ void FindingsList::paint (juce::Graphics& g)
     }
 }
 
-void FindingsList::mouseMove (const juce::MouseEvent& e)
+void SuggestionList::mouseMove (const juce::MouseEvent& e)
 {
     const int r = rowAt (e.y);
     if (r != hovered)
@@ -140,53 +195,117 @@ void FindingsList::mouseMove (const juce::MouseEvent& e)
     }
 }
 
-void FindingsList::mouseExit (const juce::MouseEvent&)
+void SuggestionList::mouseExit (const juce::MouseEvent&)
 {
     hovered = -1;
     repaint();
 }
 
-void FindingsList::mouseDown (const juce::MouseEvent& e)
+void SuggestionList::mouseDown (const juce::MouseEvent& e)
 {
     const int r = rowAt (e.y);
-    ctx.selectedFinding = (r == ctx.selectedFinding) ? -1 : r;
-    repaint();
-    if (onSelectionChanged)
-        onSelectionChanged();
+    if (r < 0)
+        return;
+    const auto& sg = suggestions[(size_t) r];
+
+    // Tick box: the action line, left part.
+    int top = 0;
+    for (int i = 0; i < r; ++i)
+        top += rowHeight (i, getWidth());
+    if (sg.band && e.y >= top + 21 && e.y < top + 39 && e.x < 40)
+    {
+        checked[(size_t) r] = ! checked[(size_t) r];
+        repaint();
+        if (onCheckedChanged)
+            onCheckedChanged();
+        return;
+    }
+
+    if (sg.findingIndex >= 0)
+    {
+        ctx.selectedFinding = (sg.findingIndex == ctx.selectedFinding) ? -1 : sg.findingIndex;
+        repaint();
+        if (onSelectionChanged)
+            onSelectionChanged();
+    }
 }
 
 //==============================================================================
 AnalysisPanel::AnalysisPanel (EditorContext& context) : ctx (context), list (context)
 {
     isStandalone = ctx.processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
+    const auto settings = ctx.processor.getCorrectionSettings();
 
-    addAndMakeVisible (primaryButton);
-    addAndMakeVisible (secondaryButton);
+    for (auto* c : std::initializer_list<juce::Component*> { &primaryButton, &secondaryButton, &instrumentBox, &modeBox, &strengthBox,
+                                                              &amountSlider, &countSlider, &preserveToggle, &highPassToggle,
+                                                              &autoApplyToggle, &applyButton, &resetButton, &viewport })
+        addAndMakeVisible (c);
     addChildComponent (fileButton);
     fileButton.setVisible (isStandalone);
-    addAndMakeVisible (viewport);
-    addAndMakeVisible (instrumentBox);
     viewport.setViewedComponent (&list, false);
-
-    // Manual instrument choice: always available, with or without the model.
-    instrumentBox.addItem ("Auto", 1);
-    instrumentBox.addSeparator();
-    for (int i = 1; i < (int) intelligence::Instrument::NumInstruments; ++i)
-        instrumentBox.addItem (intelligence::instrumentName ((intelligence::Instrument) i), i + 1);
-    instrumentBox.setTooltip ("The instrument on this track. Auto uses the detected instrument; choose one to override it.");
-    instrumentBox.onChange = [this]
-    {
-        const int id = instrumentBox.getSelectedId();
-        ctx.processor.instrumentOverride = id <= 1 ? -1 : id - 1;
-        repaint();
-    };
     viewport.setScrollBarsShown (true, false);
     viewport.setScrollBarThickness (8);
 
-    primaryButton.setColour (juce::TextButton::buttonColourId, colours::accent.withAlpha (0.2f));
-    primaryButton.setColour (juce::TextButton::textColourOffId, colours::accent);
+    // Instrument: chosen by the user, grouped by family.
+    juce::String group;
+    instrumentBox.addItem (correction::instrumentName (correction::Instrument::General), 1);
+    for (int i = 1; i < (int) correction::Instrument::NumInstruments; ++i)
+    {
+        const auto inst = (correction::Instrument) i;
+        if (correction::instrumentGroup (inst) != group)
+        {
+            group = correction::instrumentGroup (inst);
+            instrumentBox.addSectionHeading (group);
+        }
+        instrumentBox.addItem (correction::instrumentName (inst), i + 1);
+    }
+    instrumentBox.setSelectedId ((int) settings.instrument + 1, juce::dontSendNotification);
+    instrumentBox.setTooltip ("The instrument on this track. Corrections respect the parts of the spectrum that make up its sound.");
+
+    modeBox.addItemList (correction::modeNames(), 1);
+    modeBox.setSelectedId ((int) settings.mode + 1, juce::dontSendNotification);
+    modeBox.setTooltip ("Transparent: only removes problems. Polished: also adds subtle enhancement where the recording lacks it.");
+    strengthBox.addItemList (correction::strengthNames(), 1);
+    strengthBox.setSelectedId ((int) settings.strength + 1, juce::dontSendNotification);
+    strengthBox.setTooltip ("How much of each measured problem is removed, and how minor a problem may be to get a correction.");
+
+    amountSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    amountSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    amountSlider.setRange (0.0, 150.0, 1.0);
+    amountSlider.setTextValueSuffix (" %");
+    amountSlider.setValue (settings.amount * 100.0, juce::dontSendNotification);
+    amountSlider.setTooltip ("Scales every correction (100% = as proposed).");
+    countSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+    countSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    countSlider.setRange (1.0, 12.0, 1.0);
+    countSlider.setValue (settings.maxCorrections, juce::dontSendNotification);
+    countSlider.setTooltip ("Most EQ bands the correction may use; the most important problems come first.");
+
+    preserveToggle.setToggleState (settings.preserveCharacter, juce::dontSendNotification);
+    preserveToggle.setTooltip ("Treat the instrument's characteristic regions with care: smaller cuts, and none for mild excess.");
+    highPassToggle.setToggleState (settings.autoHighPass, juce::dontSendNotification);
+    highPassToggle.setTooltip ("Add a high-pass suited to the instrument, kept below the lowest measured content. (Rumble always gets one.)");
+    autoApplyToggle.setToggleState (settings.applyAutomatically, juce::dontSendNotification);
+    autoApplyToggle.setTooltip ("On: corrections become EQ bands as soon as an analysis finishes. Off: review and tick them first.");
+
+    for (auto* box : { &instrumentBox, &modeBox, &strengthBox })
+        box->onChange = [this] { settingsChanged(); };
+    for (auto* slider : { &amountSlider, &countSlider })
+    {
+        slider->onValueChange = [this] { settingsChanged(); repaint(); };
+    }
+    for (auto* toggle : { &preserveToggle, &highPassToggle, &autoApplyToggle })
+        toggle->onClick = [this] { settingsChanged(); };
+
+    for (auto* b : { &primaryButton, &applyButton })
+    {
+        b->setColour (juce::TextButton::buttonColourId, colours::accent.withAlpha (0.2f));
+        b->setColour (juce::TextButton::textColourOffId, colours::accent);
+    }
     primaryButton.setTooltip ("Listen to the playing audio and analyse it for frequency problems");
     fileButton.setTooltip ("Analyse an audio file (WAV, AIFF, FLAC, Ogg, MP3)");
+    applyButton.setTooltip ("Add the ticked corrections as EQ bands (undoable). They replace corrections applied before.");
+    resetButton.setTooltip ("Remove the EQ bands added by Apply corrections (undoable)");
 
     auto& controller = ctx.processor.analysis;
     primaryButton.onClick = [&controller]
@@ -214,14 +333,57 @@ AnalysisPanel::AnalysisPanel (EditorContext& context) : ctx (context), list (con
                                       ctx.processor.analysis.analyseFile (file);
                               });
     };
+    applyButton.onClick = [this] { applyChecked(); };
+    resetButton.onClick = [this]
+    {
+        ctx.processor.resetCorrections();
+        applyMessage = "Corrections removed.";
+        repaint();
+    };
 
     list.onSelectionChanged = [this]
     {
         if (auto* parent = getParentComponent())
             parent->repaint();
     };
+    list.onCheckedChanged = [this] { refresh(); };
 
     refresh();
+}
+
+void AnalysisPanel::settingsChanged()
+{
+    correction::Settings s;
+    s.instrument = (correction::Instrument) juce::jlimit (0, (int) correction::Instrument::NumInstruments - 1, instrumentBox.getSelectedId() - 1);
+    s.mode = (correction::Mode) juce::jlimit (0, 1, modeBox.getSelectedId() - 1);
+    s.strength = (correction::Strength) juce::jlimit (0, 2, strengthBox.getSelectedId() - 1);
+    s.amount = amountSlider.getValue() / 100.0;
+    s.maxCorrections = (int) countSlider.getValue();
+    s.preserveCharacter = preserveToggle.getToggleState();
+    s.autoHighPass = highPassToggle.getToggleState();
+    s.applyAutomatically = autoApplyToggle.getToggleState();
+    ctx.processor.setCorrectionSettings (s);
+    regenerate();
+}
+
+void AnalysisPanel::regenerate()
+{
+    list.setSuggestions (ctx.analysis, ctx.processor.getSuggestions());
+    layoutList();
+    refresh();
+}
+
+void AnalysisPanel::applyChecked()
+{
+    const auto bands = list.checkedBands();
+    const int placed = ctx.processor.applyCorrections (bands);
+    if (placed < (int) bands.size())
+        applyMessage = "Applied " + juce::String (placed) + " of " + juce::String ((int) bands.size())
+                     + " corrections: no free EQ bands left. Remove some bands and apply again.";
+    else
+        applyMessage = "Applied " + juce::String (placed) + (placed == 1 ? " correction" : " corrections")
+                     + " as EQ bands. Adjust, bypass or delete them like any band.";
+    repaint();
 }
 
 void AnalysisPanel::refresh()
@@ -235,8 +397,12 @@ void AnalysisPanel::refresh()
         shownVersion = version;
         ctx.analysis = controller.getResult();
         ctx.selectedFinding = -1;
-        list.setFindings (ctx.analysis);
+        applyMessage.clear();
+        list.setSuggestions (ctx.analysis, ctx.processor.getSuggestions());
         layoutList();
+        if (ctx.analysis != nullptr && ctx.processor.getCorrectionSettings().applyAutomatically && list.numChecked() > 0)
+            applyChecked();
+        repaint();
     }
 
     const bool busy = state == AnalysisController::State::Analysing;
@@ -248,108 +414,19 @@ void AnalysisPanel::refresh()
     secondaryButton.setEnabled (listening || (! busy && ctx.analysis != nullptr));
     fileButton.setEnabled (! busy && ! listening);
 
-    refreshInstrumentMenu();
+    bool applied = false;
+    for (int slot : ctx.processor.getCorrectionSlots())
+        applied |= ctx.readBand (slot).used;
+    const int n = list.numChecked();
+    applyButton.setButtonText ((applied ? "Update corrections" : "Apply corrections") + juce::String (n > 0 ? " (" + juce::String (n) + ")" : ""));
+    applyButton.setEnabled (n > 0 && ! busy && ! listening);
+    resetButton.setEnabled (applied);
 
     if (state != shownState || listening || busy)
     {
         shownState = state;
         repaint();
     }
-}
-
-void AnalysisPanel::refreshInstrumentMenu()
-{
-    using intelligence::InstrumentDetection;
-    juce::String autoText = "Auto";
-    if (ctx.analysis != nullptr && ctx.analysis->instrument.status == InstrumentDetection::Status::Detected)
-        autoText << ": " << intelligence::instrumentName (ctx.analysis->instrument.instrument());
-    else if (ctx.analysis != nullptr && ctx.analysis->instrument.status == InstrumentDetection::Status::Ambiguous)
-        autoText << ": not certain";
-    else if (ctx.analysis != nullptr)
-        autoText << ": not recognised";
-
-    if (autoText != shownAutoText)
-    {
-        shownAutoText = autoText;
-        instrumentBox.changeItemText (1, autoText);
-    }
-
-    const int manual = ctx.processor.instrumentOverride.load();
-    const int id = manual > 0 ? manual + 1 : 1;
-    if (instrumentBox.getSelectedId() != id)
-        instrumentBox.setSelectedId (id, juce::dontSendNotification);
-    else if (id == 1 && instrumentBox.getText() != autoText)
-        instrumentBox.setText (autoText, juce::dontSendNotification);
-}
-
-void AnalysisPanel::paintInstrument (juce::Graphics& g, juce::Rectangle<int> area)
-{
-    using intelligence::InstrumentDetection;
-    using S = InstrumentDetection::Status;
-
-    g.setColour (colours::textDim);
-    g.setFont (uiFont (11.0f, true));
-    g.drawText ("INSTRUMENT", instrumentLabelArea, juce::Justification::centredLeft, false);
-
-    auto line = [&g] (juce::Rectangle<int> r, const juce::String& text, juce::Colour c, float size, int lines = 2)
-    {
-        g.setColour (c);
-        g.setFont (uiFont (size));
-        g.drawFittedText (text, r, juce::Justification::topLeft, lines, 1.0f);
-    };
-
-    const int manual = ctx.processor.instrumentOverride.load();
-    if (ctx.analysis == nullptr)
-    {
-        line (area, manual > 0 ? "Using your choice." : "Analyze to detect the instrument, or choose it above.", colours::textDim, 11.5f);
-        return;
-    }
-
-    const auto& d = ctx.analysis->instrument;
-    auto confidenceName = [] (InstrumentDetection::Confidence c)
-    {
-        return c == InstrumentDetection::Confidence::High ? "high" : (c == InstrumentDetection::Confidence::Medium ? "medium" : "low");
-    };
-
-    juce::String main, detail;
-    juce::Colour colour = colours::text;
-    switch (d.status)
-    {
-        case S::Detected:
-        {
-            const auto& c = d.candidates.front();
-            main = "Detected: " + intelligence::instrumentName (c.instrument) + ", " + confidenceName (d.confidence) + " confidence";
-            detail = "Score " + juce::String (c.score, 2) + (c.note.isNotEmpty() ? " (" + c.note + ")" : juce::String());
-            if (d.candidates.size() > 1)
-                detail << "; next: " << intelligence::instrumentName (d.candidates[1].instrument) << " " << juce::String (d.candidates[1].score, 2);
-            colour = colours::accent;
-            break;
-        }
-        case S::Ambiguous:
-        {
-            juce::StringArray names;
-            for (const auto& c : d.candidates)
-                names.add (intelligence::instrumentName (c.instrument) + " " + juce::String (c.score, 2));
-            main = "Not certain. Possibly: " + names.joinIntoString (", ");
-            detail = "Choose the instrument above if you know it.";
-            colour = colours::warning;
-            break;
-        }
-        case S::Unknown:
-        case S::NeedMoreAudio:
-        case S::Unavailable:
-        case S::NotRun:
-            main = intelligence::describe (d);
-            detail = d.message;
-            colour = d.status == S::Unavailable ? colours::warning : colours::textDim;
-            break;
-    }
-
-    if (manual > 0)
-        detail = "Using your choice: " + intelligence::instrumentName ((intelligence::Instrument) manual) + ". " + detail;
-
-    line (area.removeFromTop (30), main, colour, 12.0f);
-    line (area, detail, colours::textDim, 11.0f);
 }
 
 juce::String AnalysisPanel::summaryText() const
@@ -375,18 +452,21 @@ void AnalysisPanel::paint (juce::Graphics& g)
     g.setColour (colours::textDim);
     g.setFont (uiFont (11.0f, true));
     g.drawText ("AUDIO ANALYSIS", getLocalBounds().reduced (12, 0).removeFromTop (30), juce::Justification::centredLeft, false);
-
-    paintInstrument (g, instrumentArea);
+    g.drawText ("INSTRUMENT", instrumentLabelArea, juce::Justification::centredLeft, false);
+    g.drawText ("CORRECTION", correctionHeaderArea, juce::Justification::centredLeft, false);
+    g.setFont (uiFont (11.5f));
+    g.drawText ("Amount " + juce::String ((int) amountSlider.getValue()) + "%", amountLabelArea, juce::Justification::centredLeft, false);
+    g.drawText ("Max bands " + juce::String ((int) countSlider.getValue()), countLabelArea, juce::Justification::centredLeft, false);
 
     auto& controller = ctx.processor.analysis;
     const auto state = controller.getState();
     auto area = statusArea;
 
-    auto drawLines = [&g] (juce::Rectangle<int> r, const juce::String& text, juce::Colour c, float size = 12.5f)
+    auto drawLines = [&g] (juce::Rectangle<int> r, const juce::String& text, juce::Colour c, float size = 12.0f, int lines = 4)
     {
         g.setColour (c);
         g.setFont (uiFont (size));
-        g.drawFittedText (text, r, juce::Justification::topLeft, 6, 1.0f);
+        g.drawFittedText (text, r, juce::Justification::topLeft, lines, 1.0f);
     };
 
     if (state == AnalysisController::State::Listening)
@@ -396,54 +476,49 @@ void AnalysisPanel::paint (juce::Graphics& g)
         g.setColour (colours::text);
         g.setFont (uiFont (13.0f, true));
         g.drawText ("Listening to the input", area.removeFromTop (18), juce::Justification::centredLeft, false);
-        area.removeFromTop (6);
-
+        area.removeFromTop (4);
         auto bar = area.removeFromTop (6).toFloat();
         g.setColour (colours::control);
         g.fillRoundedRectangle (bar, 3.0f);
         g.setColour (colours::accent);
         g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * (float) juce::jlimit (0.0, 1.0, active / target)), 3.0f);
-        area.removeFromTop (6);
-
+        area.removeFromTop (4);
         juce::String text = juce::String (active, 1) + " s of signal heard (stops at " + juce::String ((int) target) + " s).";
         if (! controller.isSignalPresent())
-            drawLines (area, text + "\nWaiting for audio: start playback in your host.", colours::warning);
+            drawLines (area, text + " Waiting for audio: start playback in your host.", colours::warning);
         else
-            drawLines (area, text + "\nLoop the section that matters; more audio gives more reliable results.", colours::textDim);
+            drawLines (area, text + " Loop the part that matters.", colours::textDim);
     }
     else if (state == AnalysisController::State::Analysing)
     {
         drawLines (area, controller.getStatusMessage(), colours::text, 13.0f);
     }
+    else if (applyMessage.isNotEmpty())
+    {
+        drawLines (area, applyMessage, colours::accent, 12.0f);
+    }
     else if (ctx.analysis != nullptr)
     {
         const auto& r = *ctx.analysis;
-        const auto source = controller.getSourceDescription();
         g.setColour (colours::text);
         g.setFont (uiFont (12.0f, true));
-        g.drawFittedText (source, area.removeFromTop (16), juce::Justification::centredLeft, 1);
-        area.removeFromTop (4);
-
+        g.drawFittedText (controller.getSourceDescription(), area.removeFromTop (16), juce::Justification::centredLeft, 1);
+        area.removeFromTop (2);
         if (r.status == AnalysisResult::Status::Ok)
-        {
-            drawLines (area.removeFromTop (48), summaryText(), colours::textDim, 12.0f);
-            if (r.findings.empty())
-                drawLines (area, "No frequency problems found.", colours::accent, 12.5f);
-        }
+            drawLines (area, r.findings.empty() ? juce::String ("No frequency problems found. Nothing to correct.") : summaryText(),
+                       r.findings.empty() ? colours::accent : colours::textDim, 11.5f);
         else
             drawLines (area, r.message, colours::warning);
     }
     else
     {
-        drawLines (area, "Play the track (loop the part that matters), then press Analyze. EyraEQ listens to the input "
-                         "and looks for rumble, hum, build-ups, resonances and ringing.",
-                   colours::textDim);
+        drawLines (area, "Choose the instrument, play the track (loop the part that matters), then press Analyze.", colours::textDim);
     }
 
     g.setColour (colours::outline);
     g.drawHorizontalLine (footerArea.getY(), 10.0f, (float) getWidth() - 10.0f);
-    drawLines (footerArea.reduced (12, 6), "Findings are measured from the audio and are suggestions; trust your ears. "
-                                           "Instrument recognition runs locally (YAMNet).", colours::textFaint, 11.0f);
+    drawLines (footerArea.reduced (12, 5), "Corrections are measured from the audio and become normal EQ bands. Trust your ears; everything is undoable.",
+               colours::textFaint, 11.0f, 2);
 }
 
 void AnalysisPanel::resized()
@@ -451,27 +526,49 @@ void AnalysisPanel::resized()
     auto area = getLocalBounds().reduced (12, 0);
     area.removeFromTop (30);
 
+    auto instrumentRow = area.removeFromTop (24);
+    instrumentLabelArea = instrumentRow.removeFromLeft (84);
+    instrumentBox.setBounds (instrumentRow);
+    area.removeFromTop (8);
+
     auto buttons = area.removeFromTop (28);
-    secondaryButton.setBounds (buttons.removeFromRight (80));
+    secondaryButton.setBounds (buttons.removeFromRight (70));
     buttons.removeFromRight (6);
     primaryButton.setBounds (buttons);
-
     if (isStandalone)
     {
         area.removeFromTop (6);
         fileButton.setBounds (area.removeFromTop (24));
     }
 
-    area.removeFromTop (10);
-    auto instrumentRow = area.removeFromTop (24);
-    instrumentLabelArea = instrumentRow.removeFromLeft (84);
-    instrumentBox.setBounds (instrumentRow);
-    area.removeFromTop (4);
-    instrumentArea = area.removeFromTop (52);
     area.removeFromTop (6);
-    statusArea = area.removeFromTop (88);
+    statusArea = area.removeFromTop (58);
+    area.removeFromTop (4);
 
-    footerArea = getLocalBounds().removeFromBottom (48);
+    correctionHeaderArea = area.removeFromTop (20);
+    auto row = area.removeFromTop (24);
+    modeBox.setBounds (row.removeFromLeft (row.getWidth() / 2 - 3));
+    row.removeFromLeft (6);
+    strengthBox.setBounds (row);
+    area.removeFromTop (4);
+    row = area.removeFromTop (22);
+    amountLabelArea = row.removeFromLeft (92);
+    amountSlider.setBounds (row);
+    row = area.removeFromTop (22);
+    countLabelArea = row.removeFromLeft (92);
+    countSlider.setBounds (row);
+    row = area.removeFromTop (22);
+    preserveToggle.setBounds (row.removeFromLeft (row.getWidth() / 2 + 14));
+    highPassToggle.setBounds (row);
+    autoApplyToggle.setBounds (area.removeFromTop (22));
+    area.removeFromTop (4);
+    row = area.removeFromTop (28);
+    resetButton.setBounds (row.removeFromRight (70));
+    row.removeFromRight (6);
+    applyButton.setBounds (row);
+    area.removeFromTop (6);
+
+    footerArea = getLocalBounds().removeFromBottom (40);
     area.setBottom (footerArea.getY() - 4);
     viewport.setBounds (area.withX (4).withWidth (getWidth() - 6));
     layoutList();
