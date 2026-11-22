@@ -1,0 +1,11 @@
+name: Probe ONNX Runtime release assets
+on: push
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list -R microsoft/onnxruntime --limit 6
+          for tag in v1.32.0 v1.31.1; do echo "== $tag"; gh release view $tag -R microsoft/onnxruntime --json assets --jq '.assets[].name' | grep -E "linux-x64|osx|win-x64" | grep -vE "gpu|cuda|directml|training" | head -12 || true; done
