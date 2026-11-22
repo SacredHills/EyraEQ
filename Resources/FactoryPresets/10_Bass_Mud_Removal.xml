@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EyraEQPreset name="Bass Mud Removal" version="1" inputGain="0" outputGain="0">
+  <Band index="1" type="HighPass" freq="35" gain="0" q="0.707" slope="18" placement="Stereo" bypass="0"/>
+  <Band index="2" type="Bell" freq="200" gain="-3.5" q="1.3" slope="12" placement="Stereo" bypass="0"/>
+  <Band index="3" type="Bell" freq="400" gain="-2.0" q="1.5" slope="12" placement="Stereo" bypass="0"/>
+</EyraEQPreset>

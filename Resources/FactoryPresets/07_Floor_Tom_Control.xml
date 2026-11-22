@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EyraEQPreset name="Floor Tom Control" version="1" inputGain="0" outputGain="0">
+  <Band index="1" type="HighPass" freq="40" gain="0" q="0.707" slope="12" placement="Stereo" bypass="0"/>
+  <Band index="2" type="Bell" freq="300" gain="-3.0" q="1.2" slope="12" placement="Stereo" bypass="0"/>
+  <Band index="3" type="Bell" freq="3000" gain="1.5" q="1.0" slope="12" placement="Stereo" bypass="0"/>
+</EyraEQPreset>

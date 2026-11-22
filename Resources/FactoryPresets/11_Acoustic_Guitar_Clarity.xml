@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EyraEQPreset name="Acoustic Guitar Clarity" version="1" inputGain="0" outputGain="0">
+  <Band index="1" type="HighPass" freq="90" gain="0" q="0.707" slope="12" placement="Stereo" bypass="0"/>
+  <Band index="2" type="Bell" freq="200" gain="-3.0" q="1.0" slope="12" placement="Stereo" bypass="0"/>
+  <Band index="3" type="Bell" freq="5000" gain="2.0" q="0.9" slope="12" placement="Stereo" bypass="0"/>
+  <Band index="4" type="HighShelf" freq="12000" gain="1.5" q="0.707" slope="12" placement="Stereo" bypass="0"/>
+</EyraEQPreset>

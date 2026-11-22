@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<EyraEQPreset name="Electric Guitar Cleanup" version="1" inputGain="0" outputGain="0">
+  <Band index="1" type="HighPass" freq="100" gain="0" q="0.707" slope="18" placement="Stereo" bypass="0"/>
+  <Band index="2" type="Bell" freq="300" gain="-2.0" q="1.0" slope="12" placement="Stereo" bypass="0"/>
+  <Band index="3" type="Bell" freq="2500" gain="-1.5" q="2.0" slope="12" placement="Stereo" bypass="0"/>
+  <Band index="4" type="LowPass" freq="12000" gain="0" q="0.707" slope="12" placement="Stereo" bypass="0"/>
+</EyraEQPreset>
