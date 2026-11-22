@@ -231,6 +231,37 @@ public:
             expect (cutAt (all, 2) > cutAt (all, 3), "intermittent: lighter than a constant resonance");
         }
 
+        beginTest ("Harmonics of held notes are not resonances");
+        {
+            auto r = okResult();
+            r.findings.clear();
+            for (double f : { 330.0, 440.0, 660.0, 881.0, 1980.0, 3960.0 })
+                r.findings.push_back (narrow (FindingType::Resonance, f, 10.0, 12.0, 0.9));
+            Settings s;
+            s.instrument = Instrument::Strings;
+            const auto all = generateCorrections (r, s);
+            for (const auto& sg : all)
+                expect (sg.kind != K::Cut, "a chord's harmonic series is not cut");
+            s.preserveCharacter = false;
+            {
+                bool anyCut = false;
+                for (const auto& sg : generateCorrections (r, s))
+                    anyCut = anyCut || sg.kind == K::Cut;
+                expect (anyCut, "unless Preserve character is off");
+            }
+
+            // A real resonance among unrelated frequencies is still cut.
+            r.findings = { narrow (FindingType::Resonance, 824.0, 10.0, 12.0, 0.9), narrow (FindingType::Resonance, 1370.0, 10.0, 12.0, 0.9),
+                           narrow (FindingType::Resonance, 3170.0, 10.0, 12.0, 0.9) };
+            s.preserveCharacter = true;
+            {
+                int cuts = 0;
+                for (const auto& sg : generateCorrections (r, s))
+                    cuts += sg.kind == K::Cut ? 1 : 0;
+                expect (cuts >= 2, "unrelated peaks are still cut");
+            }
+        }
+
         beginTest ("Minor findings are left alone, more so at Gentle");
         {
             auto r = okResult();

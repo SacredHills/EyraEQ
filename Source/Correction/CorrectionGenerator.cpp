@@ -321,6 +321,53 @@ std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult& r, 
         return true;
     };
 
+
+    // Narrow peaks that form a harmonic series are the notes of a sustained, often polyphonic, source (strings, pads,
+    // organ, chords): they are the sound itself, not resonances. A common fundamental must explain at least four of the peaks and most of them.
+    std::vector<bool> isNoteHarmonic (r.findings.size(), false);
+    std::vector<double> noteFundamentals;
+    {
+        std::vector<size_t> narrow;
+        for (size_t i = 0; i < r.findings.size(); ++i)
+            if (r.findings[i].type == FT::Resonance || r.findings[i].type == FT::IntermittentResonance)
+                narrow.push_back (i);
+        std::sort (narrow.begin(), narrow.end(), [&] (size_t a, size_t b) { return r.findings[a].frequency < r.findings[b].frequency; });
+
+        auto harmonicNumber = [] (double f, double f0, int maxN)
+        {
+            const int n = (int) std::lround (f / f0);
+            return (n >= 1 && n <= maxN && std::abs (f - n * f0) <= 0.01 * f) ? n : 0;
+        };
+        std::vector<bool> used (r.findings.size(), false);
+        for (int pass = 0; pass < 3; ++pass)
+        {
+            double bestF0 = 0.0;
+            int bestCore = 0, bestTotal = 0;
+            for (size_t a = 0; a < std::min<size_t> (narrow.size(), 6); ++a)
+                for (int n = 1; n <= 4; ++n)
+                {
+                    const double f0 = r.findings[narrow[a]].frequency / n;
+                    if (f0 < 55.0)
+                        continue;
+                    int core = 0, total = 0;
+                    for (auto j : narrow)
+                        if (! used[j])
+                        {
+                            core += harmonicNumber (r.findings[j].frequency, f0, 16) > 0 ? 1 : 0;
+                            total += harmonicNumber (r.findings[j].frequency, f0, 80) > 0 ? 1 : 0;
+                        }
+                    if (core >= 4 && core * 2 >= (int) narrow.size() && (total > bestTotal || (total == bestTotal && f0 > bestF0)))
+                        bestCore = core, bestTotal = total, bestF0 = f0;
+                }
+            if (bestCore < 4 || bestTotal * 10 < (int) narrow.size() * 6)
+                break;
+            for (auto j : narrow)
+                if (! used[j] && harmonicNumber (r.findings[j].frequency, bestF0, 80) > 0)
+                    used[j] = isNoteHarmonic[j] = true;
+            noteFundamentals.push_back (bestF0);
+        }
+    }
+
     // --- One suggestion per finding ---------------------------------------------------------
     for (int i = 0; i < (int) r.findings.size(); ++i)
     {
@@ -378,6 +425,12 @@ std::vector<Suggestion> generateCorrections (const analysis::AnalysisResult& r, 
                                                     + instrumentName (s.instrument).toLowerCase() + "); a narrow peak here is not worth a cut.");
                     continue;
                 }
+            }
+            if (isNoteHarmonic[(size_t) i] && s.preserveCharacter && ! profile.drum)
+            {
+                leftAlone (i, "Left alone", "This peak belongs to a harmonic series (the notes and their overtones, around "
+                                            + hz (noteFundamentals.front()) + "), which is the sound of the instrument, not a resonance.");
+                continue;
             }
             if (profile.drum && s.preserveCharacter && (f.type == FT::Resonance || f.type == FT::IntermittentResonance))
             {
