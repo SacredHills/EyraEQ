@@ -10,6 +10,9 @@ Phase 2 results are in the next section; Phase 1 results follow it.
 | `EyraEQHostTest` (Release) | **29 passed, 0 failed** |
 | `EyraEQTests` under ASan + UBSan + LSan (Debug) | **370 passed, 0 failed** (the 2 speed checks are skipped in debug and sanitizer builds); no sanitizer errors, no leaks, no JUCE assertions |
 
+CI (GitHub Actions run 44974368202): Linux x64, macOS Universal and Windows x64 all **pass**: build,
+`ctest` (unit tests + VST3 host test), and **pluginval strictness 10: SUCCESS** on all three.
+
 ### Detection tests on synthetic signals with known answers
 
 | Signal | Expected | Result |
