@@ -1,5 +1,4 @@
 #include "Correction/CorrectionGenerator.h"
-#include "DSP/FilterDesign.h"
 #include "PluginProcessor.h"
 #include "TestHelpers.h"
 
@@ -94,24 +93,7 @@ std::vector<float> pinkNoise (double sr, double seconds, int seed = 1)
     return x;
 }
 
-void filter (std::vector<float>& x, const dsp::FilterSpec& spec, double sr)
-{
-    const auto c = dsp::design (spec, sr);
-    std::array<std::array<double, 2>, dsp::kMaxSections> z {};
-    for (auto& v : x)
-    {
-        double y = v;
-        for (int s = 0; s < c.numSections; ++s)
-        {
-            const auto& k = c.sections[(size_t) s];
-            const double in = y;
-            y = k.b0 * in + z[(size_t) s][0];
-            z[(size_t) s][0] = k.b1 * in - k.a1 * y + z[(size_t) s][1];
-            z[(size_t) s][1] = k.b2 * in - k.a2 * y;
-        }
-        v = (float) y;
-    }
-}
+void filter (std::vector<float>& x, const test::FilterSpec& spec, double sr) { test::applyFilter (x, spec, sr); }
 
 std::vector<float> processThrough (EyraEQAudioProcessor& p, const std::vector<float>& in)
 {
@@ -544,7 +526,7 @@ public:
             s.strength = Strength::Aggressive;
             s.mode = Mode::Polished;
             s.amount = 0.7;
-            s.maxCorrections = 9;
+            s.maxCorrections = 8;
             s.preserveCharacter = false;
             s.autoHighPass = true;
             s.applyAutomatically = true;
@@ -572,8 +554,7 @@ public:
             expectEquals (usedBands (p), 3);
             const auto slots = p.getCorrectionSlots();
             expect (slots.size() == 2 && std::find (slots.begin(), slots.end(), 0) == slots.end(), "user band untouched");
-            auto reader = params::ParameterReader (p.apvts);
-            const auto b = reader.readBand (slots[0]);
+            const auto b = params::readBand (p.apvts, slots[0]);
             expect (b.used && b.type == dsp::FilterType::Bell);
             expectWithinAbsoluteError (b.frequency, 824.0, 1.0);
             expectWithinAbsoluteError (b.gainDb, bands[0].gainDb, 0.05);

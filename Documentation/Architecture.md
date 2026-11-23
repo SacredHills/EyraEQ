@@ -7,8 +7,8 @@
   ┌──────────────────────────────────────┐     ┌──────────────────────────────────────┐
   │ PluginProcessor::processBlock         │     │ Editor timer (60 Hz)                  │
   │   ParameterReader (atomics) ──┐       │     │   SpectrumAnalyzer::update  (FFT)     │
-  │                               ▼       │     │   SpectrumDisplay::refreshCurves      │
-  │   EQEngine::process ── pre tap ──► AnalyzerFifo (SPSC, lock-free) ──►│              │
+  │                               ▼       │     │   EqGraph::refreshCurves      │
+  │   EqCore::process ── pre tap ──► AnalyzerFifo (SPSC, lock-free) ──►│              │
   │                     └─ post tap ─► AnalyzerFifo ─────────────────────►│              │
   └──────────────────────────────────────┘     │ Parameter edits ─► APVTS ─► host      │
                                                │ EditHistory / ABComparison / Presets  │
@@ -43,24 +43,23 @@ Reset removes only them. See `Correction.md`.
 
 | Folder | Contents | Depends on |
 |---|---|---|
-| `DSP/` | `FilterDesign` (coefficient design), `EQBand` (smoothing, crossfades, biquad cascade), `EQEngine` (signal path, M/S, solo, gains, bypass) | `juce_audio_basics` only |
+| `DSP/` | `Biquad`, `EqCore` (eight bands, Dynamic and Spectral modes, listen, output gain), `BandParams` (the corrective EQ's view of a band), `AudioTap` | `juce_audio_processors`, `juce_dsp` |
 | `Analysis/` | `AnalyzerFifo`, `SpectrumAnalyzer`; `AudioAnalysis` (orchestrator) with `TransientAnalyzer`, `PitchEstimator`, `TonalBalanceAnalyzer`, `ResonanceDetector`, `SpectralTools`; `AnalysisController` (capture + worker) | `juce_dsp`, `juce_audio_formats` |
-| `Parameters/` | parameter layout, IDs, `ParameterReader` | `juce_audio_processors` |
+| `Parameters/` | parameter layout, IDs, `readBand` / `writeBand` | `juce_audio_processors` |
 | `State/` | `EditHistory`, `ABComparison`, `PresetManager` | `juce_audio_processors` |
 | `Correction/` | `Instrument` (choices and profiles: character regions, safe high-pass, Polished enhancements), `CorrectionGenerator` (findings + settings -> suggested bands) | `Analysis/`, `DSP/` types |
-| `UI/` | look and feel, `SpectrumDisplay`, `BandControlPanel`, `TopBar`, `AnalysisPanel`, `EditorContext` | `juce_gui_basics` |
+| `UI/` | look and feel, `EqGraph`, `EqBandPanel`, `TopBar`, `AnalysisPanel`, `EditorContext` | `juce_gui_basics` |
 
 The DSP layer has no GUI or plug-in dependencies and is tested on its own.
 
 ## Parameters
 
-Every band has eight host-automatable parameters (`b{n}_used`, `_bypass`, `_type`, `_freq`,
-`_gain`, `_q`, `_slope`, `_place`). Global parameters: `input_gain`, `output_gain`, `bypass`. IDs
-carry version hint 1. The number of bands is `EQEngine::kMaxBands`; increasing it adds parameters
-without any DSP change. Changing it breaks session compatibility for automation lanes, so it should
-be settled before the first public release.
+Every band has thirteen host-automatable parameters (`b{n}on`, `type`, `freq`, `gain`, `q`, `slope`,
+`dyn`, `range`, `thr`, `use`, `atk`, `rel`, `arel`; `use` means the band exists, `on` that it is not
+bypassed). Global parameters: `out` (output gain) and `bypass`. The EQ and its parameter ids come from the
+Ravenyr DAW's built-in EQ. Eight bands; changing that breaks session compatibility.
 
-Solo is not a parameter: it is a monitoring aid and is neither saved nor automated.
+Listen is not a parameter: it is a monitoring aid and is neither saved nor automated.
 
 ## Saved state
 
@@ -88,8 +87,7 @@ inside a `ScopedSuspend`. Master bypass is excluded from undo and A/B.
 - **Analogue-matched filters** rather than plain bilinear (RBJ) biquads, so curves keep their shape
   near Nyquist without needing oversampling, which keeps the EQ zero-latency and transparent. See `DSP.md`.
 - **Double precision** for coefficients, filter state and the whole internal signal path.
-- **Series topology with per-band stereo placement**: each band switches between the L/R and M/S
-  domains only when needed. The conversion is exact, so mixing placements costs nothing in quality.
+- **Series topology**: the bands run in series on L/R; Spectral bands share one STFT stage.
 - **No intelligent UI until it works**: the specification forbids fake controls and simulated
   results, so the analysis panel arrived only with working analysis (Phase 2).
 - **The user chooses the instrument.** Automatic recognition was built (Phase 3) but was not reliable

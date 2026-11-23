@@ -1,77 +1,61 @@
 #pragma once
 
-#include "DSP/EQBand.h"
-#include "DSP/EQEngine.h"
+#include "DSP/BandParams.h"
+#include "DSP/EqCore.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 namespace eyra::params
 {
 
-inline constexpr int kNumBands = dsp::EQEngine::kMaxBands;
+inline constexpr int kNumBands = dsp::eqBandCount;
 
 namespace id
 {
-    inline const juce::String inputGain { "input_gain" };
-    inline const juce::String outputGain { "output_gain" };
+    inline const juce::String outputGain { "out" };
     inline const juce::String masterBypass { "bypass" };
 } // namespace id
 
+/** The fields of a band, in the order of the EQ core's parameter table. */
 enum class BandField
 {
-    Used,
-    Bypass,
+    On = 0,        // band switched on (off: bypassed)
     Type,
     Frequency,
     Gain,
     Q,
     Slope,
-    Placement
+    Dynamics,      // off / dynamic / spectral
+    Range,
+    Threshold,
+    Used,          // the band exists
+    Attack,
+    Release,
+    AutoRelease
 };
 
-/** Parameter ID for a band field. Bands are 0-indexed in code, 1-indexed in IDs ("b1_freq"). */
+/** Parameter ID for a band field. Bands are 0-indexed in code, 1-indexed in IDs ("b1freq"). */
 juce::String bandParamID (int bandIndex, BandField field);
-
-juce::StringArray filterTypeNames();
-juce::StringArray slopeNames();
-juce::StringArray placementNames();
 
 /** Default frequency for a band slot when it is first created. */
 float defaultBandFrequency (int bandIndex);
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-/** Lock-free access to the raw parameter values for the audio thread. */
-class ParameterReader
-{
-public:
-    explicit ParameterReader (juce::AudioProcessorValueTreeState& state);
-
-    dsp::BandParams readBand (int bandIndex) const noexcept;
-    float inputGainDb() const noexcept { return inputGain->load(); }
-    float outputGainDb() const noexcept { return outputGain->load(); }
-    bool masterBypass() const noexcept { return bypass->load() >= 0.5f; }
-
-private:
-    struct BandPointers
-    {
-        std::atomic<float>* used = nullptr;
-        std::atomic<float>* bypass = nullptr;
-        std::atomic<float>* type = nullptr;
-        std::atomic<float>* freq = nullptr;
-        std::atomic<float>* gain = nullptr;
-        std::atomic<float>* q = nullptr;
-        std::atomic<float>* slope = nullptr;
-        std::atomic<float>* placement = nullptr;
-    };
-
-    std::array<BandPointers, kNumBands> bands;
-    std::atomic<float>* inputGain = nullptr;
-    std::atomic<float>* outputGain = nullptr;
-    std::atomic<float>* bypass = nullptr;
-};
+/** The EQ's band type for a correction's filter type, and back. */
+int eqTypeFor (dsp::FilterType) noexcept;
+dsp::FilterType filterTypeFor (int eqType) noexcept;
 
 /** Message-thread helper: sets a parameter by its real (denormalised) value, notifying the host. */
 void setParameterValue (juce::AudioProcessorValueTreeState& state, const juce::String& paramID, float realValue);
+
+/** Reads a band as the corrective EQ describes it (dynamics are not part of it). */
+dsp::BandParams readBand (juce::AudioProcessorValueTreeState& state, int bandIndex);
+
+/** Writes a band into a slot (static, switched on, in use), notifying the host. */
+void writeBand (juce::AudioProcessorValueTreeState& state, int bandIndex, const dsp::BandParams& band);
+
+/** Removes a band (not in use, gain and dynamics reset). */
+void clearBand (juce::AudioProcessorValueTreeState& state, int bandIndex);
 
 } // namespace eyra::params

@@ -12,8 +12,8 @@ namespace eyra::state
     (stored as .eyrapreset XML files in the user's application-data folder).
 
     Preset files describe bands explicitly, e.g.
-        <EyraEQPreset name="..." version="1" inputGain="0" outputGain="0">
-          <Band index="1" type="HighPass" freq="80" gain="0" q="0.707" slope="18" placement="Stereo" bypass="0"/>
+        <EyraEQPreset name="..." version="1" outputGain="0">
+          <Band index="1" type="HighPass" freq="80" gain="0" q="0.707" slope="18" bypass="0"/>
         </EyraEQPreset>
     Bands that are not listed are disabled. The same format is used for copy / paste.
 */

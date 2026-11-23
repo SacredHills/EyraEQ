@@ -59,36 +59,31 @@ EyraEQAudioProcessor::EyraEQAudioProcessor()
       apvts (*this, nullptr, "Parameters", eyra::params::createParameterLayout()),
       history (*this, { eyra::params::id::masterBypass }),
       ab (*this, history, { eyra::params::id::masterBypass }),
-      presets (apvts, history),
-      reader (apvts)
+      presets (apvts, history)
 {
     preFanout.first = &preFifo;
     preFanout.second = &analysis.getTap();
-    engine.setTaps (&preFanout, &postFifo);
+    bypassParam = apvts.getRawParameterValue (eyra::params::id::masterBypass);
+    for (auto& r : dryRing)
+        r.assign ((size_t) kDryRing, 0.0f);
 }
 
-void EyraEQAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void EyraEQAudioProcessor::prepareToPlay (double sampleRate, int)
 {
     engineSampleRate = sampleRate;
     preFifo.sampleRate = sampleRate;
     postFifo.sampleRate = sampleRate;
     analysis.prepare (sampleRate);
 
-    // Push the current parameter values first so the bands start in their final state.
-    for (int b = 0; b < eyra::params::kNumBands; ++b)
-        engine.setBandParams (b, reader.readBand (b));
-    engine.setInputGainDb (reader.inputGainDb());
-    engine.setOutputGainDb (reader.outputGainDb());
-    engine.setMasterBypass (reader.masterBypass());
-
-    engine.prepare (sampleRate, samplesPerBlock, juce::jmax (getTotalNumInputChannels(), getTotalNumOutputChannels()));
-    setLatencySamples (0);
+    eq.prepare (sampleRate);
+    for (auto& r : dryRing)
+        std::fill (r.begin(), r.end(), 0.0f);
+    dryWrite = 0;
+    wetMix.reset (sampleRate, 0.02);
+    wetMix.setCurrentAndTargetValue (bypassParam->load() >= 0.5f ? 0.0f : 1.0f);
 }
 
-void EyraEQAudioProcessor::releaseResources()
-{
-    engine.reset();
-}
+void EyraEQAudioProcessor::releaseResources() {}
 
 bool EyraEQAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
@@ -98,22 +93,61 @@ bool EyraEQAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
     return layouts.getMainInputChannelSet() == out;
 }
 
+void EyraEQAudioProcessor::pushTap (eyra::dsp::AudioTap& tap, const float* l, const float* r, int n) noexcept
+{
+    for (int off = 0; off < n; off += (int) tapL.size())
+    {
+        const int len = juce::jmin ((int) tapL.size(), n - off);
+        for (int i = 0; i < len; ++i)
+        {
+            tapL[(size_t) i] = l[off + i];
+            tapR[(size_t) i] = r != nullptr ? r[off + i] : l[off + i];
+        }
+        tap.pushSamples (tapL.data(), tapR.data(), len);
+    }
+}
+
 void EyraEQAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
 
-    for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
-        buffer.clear (ch, 0, buffer.getNumSamples());
+    const int n = buffer.getNumSamples();
+    const int nch = juce::jmin (2, buffer.getNumChannels(), getTotalNumOutputChannels());
+    for (int ch = getTotalNumInputChannels(); ch < buffer.getNumChannels(); ++ch)
+        buffer.clear (ch, 0, n);
+    if (n == 0 || nch == 0)
+        return;
 
-    for (int b = 0; b < eyra::params::kNumBands; ++b)
-        engine.setBandParams (b, reader.readBand (b));
+    float* L = buffer.getWritePointer (0);
+    float* R = nch > 1 ? buffer.getWritePointer (1) : nullptr;
 
-    engine.setInputGainDb (reader.inputGainDb());
-    engine.setOutputGainDb (reader.outputGainDb());
-    engine.setMasterBypass (reader.masterBypass());
-    engine.setSoloBand (soloBand.load (std::memory_order_relaxed));
+    pushTap (preFanout, L, R, n);
 
-    engine.process (buffer);
+    // Keep the dry signal for the bypass crossfade, then run the EQ (always, so it is warm when bypass is released).
+    const int latency = eq.getLatencySamples();
+    for (int i = 0; i < n; ++i)
+    {
+        dryRing[0][(size_t) ((dryWrite + i) & (kDryRing - 1))] = L[i];
+        if (R != nullptr)
+            dryRing[1][(size_t) ((dryWrite + i) & (kDryRing - 1))] = R[i];
+    }
+    eq.process (L, R, n);
+
+    wetMix.setTargetValue (bypassParam->load() >= 0.5f ? 0.0f : 1.0f);
+    if (wetMix.isSmoothing() || wetMix.getTargetValue() < 0.5f)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const float w = wetMix.getNextValue();
+            const size_t at = (size_t) ((dryWrite + i - latency) & (kDryRing - 1));
+            L[i] = L[i] * w + dryRing[0][at] * (1.0f - w);
+            if (R != nullptr)
+                R[i] = R[i] * w + dryRing[1][at] * (1.0f - w);
+        }
+    }
+    dryWrite = (dryWrite + n) & (kDryRing - 1);
+
+    pushTap (postFifo, L, R, n);
 }
 
 juce::AudioProcessorEditor* EyraEQAudioProcessor::createEditor()
@@ -149,20 +183,15 @@ std::vector<int> EyraEQAudioProcessor::getCorrectionSlots() const
 
 void EyraEQAudioProcessor::clearCorrectionSlots()
 {
-    using eyra::params::BandField;
     for (int slot : getCorrectionSlots())
-        if (slot >= 0 && slot < eyra::params::kNumBands && reader.readBand (slot).used)
-        {
-            eyra::params::setParameterValue (apvts, eyra::params::bandParamID (slot, BandField::Used), 0.0f);
-            eyra::params::setParameterValue (apvts, eyra::params::bandParamID (slot, BandField::Gain), 0.0f);
-        }
+        if (slot >= 0 && slot < eyra::params::kNumBands && eyra::params::readBand (apvts, slot).used)
+            eyra::params::clearBand (apvts, slot);
     const juce::ScopedLock lock (correctionLock);
     correctionSlots.clear();
 }
 
 int EyraEQAudioProcessor::applyCorrections (const std::vector<eyra::dsp::BandParams>& bands)
 {
-    using eyra::params::BandField;
     history.beginEdit();
     const eyra::state::EditHistory::ScopedSuspend suspend (history);
 
@@ -172,18 +201,11 @@ int EyraEQAudioProcessor::applyCorrections (const std::vector<eyra::dsp::BandPar
     size_t next = 0;
     for (int slot = 0; slot < eyra::params::kNumBands && next < bands.size(); ++slot)
     {
-        if (reader.readBand (slot).used)
+        if (eyra::params::readBand (apvts, slot).used)
             continue;
-        const auto& b = bands[next++];
-        auto set = [&] (BandField field, float value) { eyra::params::setParameterValue (apvts, eyra::params::bandParamID (slot, field), value); };
-        set (BandField::Type, (float) (int) b.type);
-        set (BandField::Frequency, (float) b.frequency);
-        set (BandField::Gain, (float) b.gainDb);
-        set (BandField::Q, (float) b.q);
-        set (BandField::Slope, (float) b.slopeIndex);
-        set (BandField::Placement, (float) (int) b.placement);
-        set (BandField::Bypass, 0.0f);
-        set (BandField::Used, 1.0f);
+        auto b = bands[next++];
+        b.bypassed = false;
+        eyra::params::writeBand (apvts, slot, b);
         slots.push_back (slot);
     }
 

@@ -43,9 +43,7 @@ juce_add_binary_data(EyraEQ_BinaryData
 set(EYRA_SOURCES
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
-    Source/DSP/FilterDesign.cpp
-    Source/DSP/EQBand.cpp
-    Source/DSP/EQEngine.cpp
+    Source/DSP/EqCore.cpp
     Source/Analysis/SpectrumAnalyzer.cpp
     Source/Analysis/AudioAnalysis.cpp
     Source/Analysis/SpectralTools.cpp
@@ -59,8 +57,8 @@ set(EYRA_SOURCES
     Source/State/EditHistory.cpp
     Source/State/ABComparison.cpp
     Source/UI/EyraLookAndFeel.cpp
-    Source/UI/SpectrumDisplay.cpp
-    Source/UI/BandControlPanel.cpp
+    Source/UI/EqGraph.cpp
+    Source/UI/EqBandPanel.cpp
     Source/UI/TopBar.cpp
     Source/UI/AnalysisPanel.cpp
     Source/Correction/Instrument.cpp
@@ -121,8 +119,7 @@ if(EYRA_BUILD_TESTS)
     target_sources(EyraEQTests PRIVATE
         ${EYRA_SOURCES}
         Tests/TestMain.cpp
-        Tests/FilterDesignTests.cpp
-        Tests/EQEngineTests.cpp
+        Tests/EqCoreTests.cpp
         Tests/ProcessorTests.cpp
         Tests/AnalyzerTests.cpp
         Tests/RealtimeTests.cpp

@@ -3,7 +3,7 @@
 #include "Analysis/AnalysisController.h"
 #include "Analysis/SpectrumAnalyzer.h"
 #include "Correction/CorrectionGenerator.h"
-#include "DSP/EQEngine.h"
+#include "DSP/EqCore.h"
 #include "Parameters/Parameters.h"
 #include "State/ABComparison.h"
 #include "State/EditHistory.h"
@@ -18,7 +18,7 @@ struct EyraUIState
     bool showPreSpectrum = true;
     bool showPostSpectrum = true;
     float displayRangeDb = 18.0f; // +/- range of the EQ curve scale: 6, 12, 18, 30
-    bool analysisPanelOpen = true;
+    bool analysisPanelOpen = false; // the correction panel starts closed
     bool showAnalysisOverlay = true;
     int editorWidth = 1240;
     int editorHeight = 720;
@@ -89,17 +89,14 @@ public:
     /** Band slots currently holding generated corrections. */
     std::vector<int> getCorrectionSlots() const;
 
-    /** Band currently soloed for audition (-1 = none). Not saved, not automatable. */
-    std::atomic<int> soloBand { -1 };
-
     EyraUIState getUIState() const;
     void setUIState (const EyraUIState&);
 
     /** Current sample rate as seen by the audio engine (for drawing exact responses). */
     double getEngineSampleRate() const noexcept { return engineSampleRate.load(); }
 
-    /** For tests. */
-    eyra::dsp::EQEngine& getEngine() noexcept { return engine; }
+    /** The EQ (the editor's graph reads its dynamics and sets the band to listen to). */
+    eyra::dsp::EqCore& getEq() noexcept { return eq; }
 
 private:
     /** Sends the pre-EQ signal to both the spectrum display and the analysis capture. */
@@ -114,8 +111,16 @@ private:
         }
     } preFanout;
 
-    eyra::params::ParameterReader reader;
-    eyra::dsp::EQEngine engine;
+    eyra::dsp::EqCore eq { *this, apvts };
+    std::atomic<float>* bypassParam = nullptr;
+    juce::SmoothedValue<float> wetMix { 1.0f };
+
+    // The dry signal, delayed like the EQ is (spectral bands add latency), for the bypass crossfade.
+    static constexpr int kDryRing = 8192;
+    std::array<std::vector<float>, 2> dryRing;
+    int dryWrite = 0;
+    std::array<double, 2048> tapL {}, tapR {};
+    void pushTap (eyra::dsp::AudioTap&, const float* l, const float* r, int n) noexcept;
     std::atomic<double> engineSampleRate { 48000.0 };
 
     mutable juce::CriticalSection uiStateLock;

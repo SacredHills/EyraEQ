@@ -16,23 +16,21 @@ The full product specification lives in [DEVELOPMENT_PROMPT.md](DEVELOPMENT_PROM
 | 2 | Audio analysis: problem-frequency and resonance detection, analysis buffer | **Done.** Listen-then-analyse workflow, detection of resonances, ringing, hum, build-ups, rumble and DC, shown in a collapsible panel and on the spectrum (see [Analysis](Documentation/Analysis.md)). |
 | 3 | Instrument recognition | **Dropped at the owner's request.** Automatic recognition (a local YAMNet model) was built and measured, but was not reliable enough on real tracks; the user now chooses the instrument. No ONNX Runtime or model files are needed. |
 | 4 | Corrective EQ generating real bands | **Done.** Instrument-aware corrections from the measured problems: Gentle / Moderate / Aggressive, Transparent / Polished, amount, number of bands, Preserve character, auto high-pass; applied automatically or approved one by one; undoable (see [Correction](Documentation/Correction.md)). |
-| 5 | Dynamic EQ, resonance suppression, advanced analyser options | Not started (M/S and per-band stereo placement were brought forward into Phase 1) |
+| 5 | Dynamic EQ, resonance suppression, advanced analyser options | Partly done: per-band Dynamic and Spectral modes came with the Ravenyr EQ. Resonance suppression and advanced analyser options not started |
 | 6 | Installers (.exe, .dmg/.pkg, .AppImage/.deb), signing, DAW compatibility testing | Not started |
 
 
 ## What works now (Phase 1)
 
-**EQ engine**
-- 24 bands (a compile-time constant; the engine is not tied to the number).
-- Types: bell, low shelf, high shelf, high pass, low pass, notch, band pass, tilt.
-- High / low pass slopes: 6, 12, 18, 24, 36, 48, 72 and 96 dB/oct, with resonance (Q) control.
-- Per-band stereo placement: stereo, left, right, mid or side.
-- Per-band bypass and solo (audition the band's region).
-- Analogue-matched filter design in double precision: no bilinear "cramping" near Nyquist.
-- Click-free: continuous parameters are smoothed; type / slope / placement changes and
-  enable / bypass use a short S-curve crossfade. Measured transients stay at least 80 dB below the signal.
-- Zero latency, no allocation or locking on the audio thread, denormal-safe.
-- Input gain, output gain, master bypass (exposed to the host as its bypass parameter).
+**EQ engine** (the built-in EQ of the Ravenyr DAW)
+- 8 bands. Types: bell, low shelf, high shelf, low cut, high cut, notch, band pass.
+- Low / high cut slopes: 6, 12, 18, 24, 36, 48, 72 and 96 dB/oct, with resonance (Q) control.
+- Per-band Dynamic mode (the band's gain follows the level in the band: threshold, range, attack,
+  release, auto release) and Spectral mode (the dynamics work frequency by frequency inside the band,
+  so only what pokes out is turned down). Spectral mode adds 2048 samples of latency, reported to the host.
+- Listen: audition a band's region (Alt-drag a node, or the Listen button).
+- Output gain and master bypass (exposed to the host as its bypass parameter).
+- Zero latency unless a band is Spectral; no allocation or locking on the audio thread.
 
 **Spectrum analyser**
 - Pre-EQ (input) and post-EQ (output) spectra, each can be hidden.
@@ -41,13 +39,14 @@ The full product specification lives in [DEVELOPMENT_PROMPT.md](DEVELOPMENT_PROM
 - Lock-free audio-to-UI transfer; the analysis runs on the UI thread and can never stall audio.
 
 **Interface**
-- Spectrum-centred, resizable (860×520 up to 3200×2000) with size presets, HiDPI via JUCE.
-- Double-click to create a band, drag nodes (Shift = fine), mouse wheel for Q, Shift-click or lasso
-  for multi-select (selected bands move together), double-click a node to bypass, right-click for
-  type / slope / placement / bypass / solo / delete, Delete key removes the selection.
-- Band panel with type, frequency, gain, Q, slope, placement, bypass, solo and delete.
+- Spectrum-centred graph, resizable, HiDPI via JUCE. Double-click to add a band, drag nodes
+  (Alt = listen, Shift = gain only, Ctrl = frequency only), mouse wheel for Q (slope for cuts, range
+  for dynamic bands), double-click a node to remove it, right-click for the band menu, Delete removes the band.
+- Band panel under the graph: type, slope, dynamics, frequency, gain, Q, threshold, range, attack,
+  release, auto release, on, listen, remove.
 - Undo / redo (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z), A/B comparison with copy, copy / paste of EQ
   settings (Ctrl/Cmd+C / V), reset.
+- The Analysis button opens the analysis and correction panel (closed by default).
 - Presets: 14 factory starting points (plus an empty Default) and user presets (saved as `.eyrapreset` XML files).
 
 ## What works now (Phase 2)
@@ -75,7 +74,7 @@ The full product specification lives in [DEVELOPMENT_PROMPT.md](DEVELOPMENT_PROM
    **Reset** removes them; everything is undoable.
 
 Controls: Transparent (cuts only) or Polished (plus subtle enhancement where nothing is wrong);
-Gentle / Moderate / Aggressive; Amount (0–150%); Max bands (1–12); Preserve character (smaller or no
+Gentle / Moderate / Aggressive; Amount (0–150%); Max bands (1–8); Preserve character (smaller or no
 cuts in regions that make up the instrument's sound); Auto high-pass (kept below the lowest notes).
 
 ## Building
@@ -99,7 +98,7 @@ Platform details, Linux package dependencies and plug-in install locations are i
 
 `ctest` runs two executables:
 - `EyraEQTests`: filter accuracy and stability, engine behaviour (gain accuracy, sample rates,
-  block sizes, M/S, clicks, solo, NaN/denormals), processor state, presets, undo, A/B, analyser
+  dynamic and spectral bands, latency, NaN/denormals), processor state, presets, undo, A/B, analyser
   calibration, editor rendering, and the analysis engine on synthetic signals with known answers,
   including false-positive checks.
 - `EyraEQHostTest`: loads the built `EyraEQ.vst3` through JUCE's VST3 hosting layer and checks
@@ -113,13 +112,13 @@ strictness 10 on all three platforms.
 
 ```
 Source/
-  DSP/          filter design, band, engine (no JUCE GUI dependencies)
+  DSP/          EQ engine (taken from the Ravenyr DAW), band parameters
   Analysis/     spectrum analyser, audio analysis (pitch, transients, tonal balance,
                 resonances) and the capture / worker controller
   Correction/   instrument profiles and the correction generator (findings -> EQ bands)
-  Parameters/   parameter layout and lock-free parameter reader
+  Parameters/   parameter layout
   State/        presets, undo history, A/B
-  UI/           look and feel, spectrum display, band panel, top bar
+  UI/           look and feel, EQ graph, band panel, top bar, analysis panel
   PluginProcessor.*, PluginEditor.*
 Resources/FactoryPresets/   generated by Scripts/generate_factory_presets.py
 Tests/          unit tests and the VST3 host test

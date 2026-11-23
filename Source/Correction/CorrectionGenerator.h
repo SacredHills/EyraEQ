@@ -2,7 +2,7 @@
 
 #include "Analysis/AudioAnalysis.h"
 #include "Correction/Instrument.h"
-#include "DSP/EQBand.h"
+#include "DSP/BandParams.h"
 
 #include <juce_data_structures/juce_data_structures.h>
 
@@ -21,7 +21,7 @@ struct Settings
     Strength strength = Strength::Moderate;
     Mode mode = Mode::Polished;
     double amount = 1.0;          // 0..1.5, scales every gain
-    int maxCorrections = 8;       // 1..12
+    int maxCorrections = 6;       // 1..8 (the EQ has eight bands)
     bool preserveCharacter = true;
     bool autoHighPass = true;     // also suggest a high-pass suited to the instrument (none for General)
     bool applyAutomatically = false; // apply as soon as an analysis finishes (otherwise: suggestions)

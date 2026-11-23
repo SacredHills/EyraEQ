@@ -33,7 +33,7 @@ Settings Settings::fromValueTree (const juce::ValueTree& t)
     s.strength = (Strength) juce::jlimit (0, 2, (int) t.getProperty ("strength", (int) s.strength));
     s.mode = (Mode) juce::jlimit (0, 1, (int) t.getProperty ("mode", (int) s.mode));
     s.amount = juce::jlimit (0.0, 1.5, (double) t.getProperty ("amount", s.amount));
-    s.maxCorrections = juce::jlimit (1, 12, (int) t.getProperty ("maxCorrections", s.maxCorrections));
+    s.maxCorrections = juce::jlimit (1, 8, (int) t.getProperty ("maxCorrections", s.maxCorrections));
     s.preserveCharacter = (bool) t.getProperty ("preserveCharacter", s.preserveCharacter);
     s.autoHighPass = (bool) t.getProperty ("autoHighPass", s.autoHighPass);
     s.applyAutomatically = (bool) t.getProperty ("applyAutomatically", s.applyAutomatically);

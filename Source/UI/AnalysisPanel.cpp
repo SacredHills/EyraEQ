@@ -308,7 +308,7 @@ AnalysisPanel::AnalysisPanel (EditorContext& context) : ctx (context), list (con
     amountSlider.setTooltip ("Scales every correction (100% = as proposed).");
     countSlider.setSliderStyle (juce::Slider::LinearHorizontal);
     countSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    countSlider.setRange (1.0, 12.0, 1.0);
+    countSlider.setRange (1.0, 8.0, 1.0);
     countSlider.setValue (settings.maxCorrections, juce::dontSendNotification);
     countSlider.setTooltip ("Most EQ bands the correction may use; the most important problems come first.");
 

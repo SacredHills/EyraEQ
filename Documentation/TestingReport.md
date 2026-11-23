@@ -170,23 +170,9 @@ Date: 2026-11-21 · Branch `phase-1-functional-eq`
 
 | Area | What is verified | Measured |
 |---|---|---|
-| Bell accuracy | gain at f0 across 44.1–192 kHz, 20 Hz–18 kHz, ±1–24 dB, Q 0.1–20 | max error 0.00001 dB |
-| Bell vs analogue | full grid, 30 Hz–30 kHz | ≤ 0.77 dB for f0 ≤ fs/6; worst 3.3 dB vs 12 dB bilinear |
-| Q / bandwidth | digital gain at analogue half-gain edges | within 0.15 dB |
-| Shelves | DC, transition (half gain), HF | within 0.05 dB (HF near Nyquist 0.6 dB) |
-| HP / LP | −3.01 dB at cutoff, slope for 6–96 dB/oct, resonance | within 0.05 dB / 0.6 dB |
-| Notch / BP / tilt | depth, peak, pivot, extremes | notch < −60 dB; others ≤ 0.15 dB |
-| Stability | 360,000 sections over the full parameter space and 22.05–192 kHz | all stable |
-| Engine gain | sine measurements vs design, 4 sample rates | within 0.05 dB |
-| Transparency | no bands, and master bypass | bit-identical output |
-| Block sizes | 1, 17, 333, 512, 4096 (larger than prepared) | identical output (≤ 1e-6) |
-| Stereo | left, right, mid, side on mono-compatible and pure-side signals | as expected, ≤ 0.05 dB |
-| Clicks | gain, frequency, type, slope, enable, disable, bypass, placement, Q, master bypass | HF transient ≤ −81 dBFS on a −20 dBFS signal (fades ≤ −105 dBFS) |
-| Solo | out-of-band attenuation, in-band level | < −30 dB / within 0.1 dB |
-| Robustness | 24 high-Q bands, impulse then ~23 s silence | no NaN or Inf, decays below 1e-20 |
-| CPU | 24 active bands (one at 96 dB/oct), stereo, 48 kHz | ~42× real time on one core, including signal generation |
-| Real-time safety | heap allocations in `processBlock` over 400 blocks with parameter changes, type / enable / placement switches and solo | 0 (counter verified by a self-check) |
-| Parameters | 195 automatable parameters, host bypass, value text | pass |
+| EQ core | bell / shelf gain, cut corner and slope for all eight slopes, notch depth, Dynamic and Spectral behaviour, latency | see `Tests/EqCoreTests.cpp` |
+| Real-time safety | heap allocations in `processBlock` over 400 blocks with parameter changes, type / enable / dynamics switches and listen | 0 (counter verified by a self-check) |
+| Parameters | 106 automatable parameters, host bypass, value text | pass |
 | State | save / restore of all parameters, UI state, preset name, A/B slot; garbage input ignored | pass |
 | Presets | all 15 factory presets load and match their files; user preset save / load / delete | pass |
 | Undo / A/B / copy-paste | round trips | pass |
