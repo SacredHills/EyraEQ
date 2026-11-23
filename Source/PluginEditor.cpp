@@ -5,8 +5,8 @@ using namespace eyra;
 namespace
 {
     constexpr int kTopBarHeight = 46;
-    constexpr int kBandPanelHeight = 132;
-    constexpr int kAnalysisPanelWidth = 300;
+    constexpr int kBandPanelHeight = 128;
+    constexpr int kAnalysisPanelWidth = 330;
     constexpr int kMinWidth = 860, kMinHeight = 520;
     constexpr int kMaxWidth = 3200, kMaxHeight = 2000;
 } // namespace
@@ -81,20 +81,22 @@ void SavePresetOverlay::resized()
 
 //==============================================================================
 EyraEQAudioProcessorEditor::EyraEQAudioProcessorEditor (EyraEQAudioProcessor& p)
-    : AudioProcessorEditor (&p), processorRef (p), context (p), topBar (context), display (context), bandPanel (context), analysisPanel (context)
+    : AudioProcessorEditor (&p), processorRef (p), context (p), topBar (context), graph (context), bandPanel (context), analysisPanel (context)
 {
     setLookAndFeel (&lookAndFeel);
     setWantsKeyboardFocus (true);
 
     addAndMakeVisible (topBar);
-    addAndMakeVisible (display);
+    addAndMakeVisible (graph);
     addAndMakeVisible (bandPanel);
     addChildComponent (analysisPanel);
-    analysisPanel.setVisible (p.getUIState().analysisPanelOpen);
+    analysisPanel.setVisible (p.getUIState().analysisPanelOpen); // closed unless the session had it open
+    graph.onSelect = [this] (int band) { bandPanel.showBand (band); };
+    graph.onListenChanged = [this] { bandPanel.refresh(); };
     addChildComponent (saveOverlay);
 
     topBar.onSavePresetRequested = [this] { saveOverlay.show (processorRef.presets.getCurrentPresetName()); };
-    topBar.onUIStateChanged = [this] (const EyraUIState& s) { display.applyUIState (s); };
+    topBar.onUIStateChanged = [this] (const EyraUIState& s) { graph.applyUIState (s); };
     topBar.onWindowSizeRequested = [this] (int w, int h) { setSize (w, h); };
     topBar.onAnalysisPanelToggled = [this] (bool open)
     {
@@ -127,10 +129,11 @@ void EyraEQAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
     topBar.setBounds (area.removeFromTop (kTopBarHeight));
-    bandPanel.setBounds (area.removeFromBottom (kBandPanelHeight));
     if (analysisPanel.isVisible())
-        analysisPanel.setBounds (area.removeFromRight (kAnalysisPanelWidth));
-    display.setBounds (area);
+        analysisPanel.setBounds (area.removeFromRight (kAnalysisPanelWidth)); // full height: room for the correction list
+    bandPanel.setBounds (area.removeFromBottom (kBandPanelHeight));
+    area.removeFromBottom (8);
+    graph.setBounds (area);
     saveOverlay.setBounds (getLocalBounds());
 
     auto ui = processorRef.getUIState();
@@ -142,7 +145,7 @@ void EyraEQAudioProcessorEditor::resized()
 void EyraEQAudioProcessorEditor::timerCallback()
 {
     const double now = juce::Time::getMillisecondCounterHiRes();
-    display.tick ((now - lastTick) * 0.001);
+    graph.tick ((now - lastTick) * 0.001);
     lastTick = now;
 
     // Controls that don't need 60 Hz updates.
@@ -184,25 +187,9 @@ bool EyraEQAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
         topBar.pasteSettingsFromClipboard();
         return true;
     }
-    if (cmd && (code == 'A' || code == 'a'))
-    {
-        context.selection.deselectAll();
-        for (int b = 0; b < params::kNumBands; ++b)
-            if (context.value (b, params::BandField::Used) >= 0.5f)
-                context.selection.addToSelection (b);
-        display.repaint();
-        return true;
-    }
-    if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
-    {
-        context.deleteBands (context.selection.getItemArray());
-        display.repaint();
-        return true;
-    }
     if (key == juce::KeyPress::escapeKey)
     {
-        context.selection.deselectAll();
-        display.repaint();
+        graph.select (-1);
         return true;
     }
     return false;

@@ -2,10 +2,10 @@
 
 #include "PluginProcessor.h"
 #include "UI/AnalysisPanel.h"
-#include "UI/BandControlPanel.h"
+#include "UI/EqBandPanel.h"
 #include "UI/EditorContext.h"
 #include "UI/EyraLookAndFeel.h"
-#include "UI/SpectrumDisplay.h"
+#include "UI/EqGraph.h"
 #include "UI/TopBar.h"
 
 /** In-window prompt for naming a preset (avoids separate top-level windows inside hosts). */
@@ -37,7 +37,7 @@ public:
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
 
-    eyra::ui::SpectrumDisplay& getSpectrumDisplay() noexcept { return display; }
+    eyra::ui::EqGraph& getGraph() noexcept { return graph; }
     eyra::ui::EditorContext& getContext() noexcept { return context; }
     void refreshNow() { timerCallback(); topBar.refresh(); bandPanel.refresh(); analysisPanel.refresh(); }
 
@@ -49,8 +49,8 @@ private:
     eyra::ui::EditorContext context;
 
     eyra::ui::TopBar topBar;
-    eyra::ui::SpectrumDisplay display;
-    eyra::ui::BandControlPanel bandPanel;
+    eyra::ui::EqGraph graph;
+    eyra::ui::EqBandPanel bandPanel;
     eyra::ui::AnalysisPanel analysisPanel;
     SavePresetOverlay saveOverlay;
     juce::TooltipWindow tooltips { this, 700 };

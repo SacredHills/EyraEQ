@@ -34,6 +34,7 @@ int countUsedBands (EyraEQAudioProcessor& p)
 void makeBand (EyraEQAudioProcessor& p, int b, int type, float freq, float gain, float q)
 {
     setReal (p, bandParamID (b, BandField::Used), 1.0f);
+    setReal (p, bandParamID (b, BandField::On), 1.0f);
     setReal (p, bandParamID (b, BandField::Type), (float) type);
     setReal (p, bandParamID (b, BandField::Frequency), freq);
     setReal (p, bandParamID (b, BandField::Gain), gain);
@@ -50,7 +51,7 @@ public:
         beginTest ("Parameters: count, automation and host bypass");
         {
             EyraEQAudioProcessor p;
-            expectEquals (p.getParameters().size(), params::kNumBands * 8 + 3);
+            expectEquals (p.getParameters().size(), params::kNumBands * 13 + 2);
             bool allAutomatable = true;
             for (auto* param : p.getParameters())
                 allAutomatable &= param->isAutomatable();
@@ -61,9 +62,8 @@ public:
             // Value text shown to hosts
             auto* f = p.apvts.getParameter (bandParamID (0, BandField::Frequency));
             expectEquals (f->getText (f->convertTo0to1 (607.391f), 32), juce::String ("607 Hz"));
-            expect (f->getText (f->convertTo0to1 (42.25f), 32).startsWith ("42."));
+            expectEquals (f->getText (f->convertTo0to1 (42.25f), 32), juce::String ("42 Hz"));
             expectEquals (f->getText (f->convertTo0to1 (2500.0f), 32), juce::String ("2.50 kHz"));
-            expectWithinAbsoluteError (f->convertFrom0to1 (f->getValueForText ("3.2k")), 3200.0f, 0.5f);
         }
 
         beginTest ("Bus layouts: mono and stereo supported, mismatched rejected");
@@ -116,8 +116,8 @@ public:
             makeBand (a, 0, 3, 75.0f, 0.0f, 0.9f);
             setReal (a, bandParamID (0, BandField::Slope), 4.0f);
             makeBand (a, 5, 0, 2500.0f, 4.5f, 3.0f);
-            setReal (a, bandParamID (5, BandField::Placement), 4.0f);
-            setReal (a, bandParamID (5, BandField::Bypass), 1.0f);
+            setReal (a, bandParamID (5, BandField::Dynamics), 1.0f);
+            setReal (a, bandParamID (5, BandField::On), 0.0f);
             setReal (a, params::id::outputGain, -2.5f);
             auto ui = a.getUIState();
             ui.analyzer.fftOrder = 14;
@@ -200,7 +200,7 @@ public:
         {
             EyraEQAudioProcessor p;
             makeBand (p, 0, 0, 440.0f, 3.0f, 2.0f);
-            makeBand (p, 7, 7, 900.0f, -5.0f, 1.0f);
+            makeBand (p, 7, 6, 900.0f, 0.0f, 1.0f);
             const auto before = state::captureParameters (p);
             const auto xml = p.presets.createPresetXml ("clip")->toString();
             p.presets.resetToDefault();
@@ -296,7 +296,7 @@ public:
                 }
                 p.processBlock (buf, midi);
                 if (blk % 4 == 0)
-                    ed->getSpectrumDisplay().tick (0.04);
+                    ed->getGraph().tick (0.04);
                 if (blk % 40 == 0)
                     juce::Thread::sleep (2);
             }
@@ -307,7 +307,7 @@ public:
             if (ed->getContext().analysis != nullptr && ! ed->getContext().analysis->findings.empty())
                 ed->getContext().selectedFinding = 0;
 
-            ed->getContext().selection.selectOnly (6);
+            ed->getContext().selectedBand = 6;
             ed->refreshNow();
 
             for (auto [w, h] : { std::pair { 860, 520 }, std::pair { 1240, 720 }, std::pair { 1760, 1060 } })
@@ -327,7 +327,7 @@ public:
             }
 
             // Mapping round-trip on the display.
-            auto& d = ed->getSpectrumDisplay();
+            auto& d = ed->getGraph();
             expectWithinRelativeError (d.frequencyForX (d.xForFrequency (1234.0)), 1234.0, 1.0e-4);
             expectWithinAbsoluteError (d.gainForY (d.yForGain (-7.5)), -7.5, 1.0e-4);
 

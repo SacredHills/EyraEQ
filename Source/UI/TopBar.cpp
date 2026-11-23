@@ -291,7 +291,7 @@ void TopBar::showEditMenu()
                             else if (result == 3)
                             {
                                 safe->ctx.processor.presets.resetToDefault();
-                                safe->ctx.selection.deselectAll();
+                                safe->ctx.selectedBand = -1;
                             }
                         });
 }

@@ -1,5 +1,4 @@
 #include "Analysis/AudioAnalysis.h"
-#include "DSP/FilterDesign.h"
 #include "TestHelpers.h"
 
 #include <juce_core/juce_core.h>
@@ -13,26 +12,9 @@ namespace
 {
 constexpr double twoPi = 2.0 * std::numbers::pi;
 
-void applyFilter (std::vector<float>& x, const FilterSpec& spec, double sr, int start = 0, int end = -1)
-{
-    const auto c = design (spec, sr);
-    std::array<std::array<double, 2>, kMaxSections> z {};
-    if (end < 0)
-        end = (int) x.size();
-    for (int i = start; i < end; ++i)
-    {
-        double y = x[(size_t) i];
-        for (int s = 0; s < c.numSections; ++s)
-        {
-            const auto& k = c.sections[(size_t) s];
-            const double in = y;
-            y = k.b0 * in + z[(size_t) s][0];
-            z[(size_t) s][0] = k.b1 * in - k.a1 * y + z[(size_t) s][1];
-            z[(size_t) s][1] = k.b2 * in - k.a2 * y;
-        }
-        x[(size_t) i] = (float) y;
-    }
-}
+using eyra::test::applyFilter;
+using eyra::test::FilterSpec;
+using eyra::dsp::FilterType;
 
 /** Band-limited pink noise (30 Hz - 18 kHz) at roughly -20 dBFS RMS: a "clean", realistic test source. */
 std::vector<float> pinkNoise (double sr, double seconds, int seed = 1)
@@ -385,15 +367,6 @@ public:
                 expectWithinAbsoluteError (r->activeSeconds, eyra::analysis::AnalysisController::kTargetActiveSeconds, 1.0);
                 expect (find (*r, FindingType::Resonance, 2400.0, 0.03) != nullptr, "resonance found through the plug-in");
 
-                // Instrument recognition runs on the same capture.
-                using IS = eyra::intelligence::InstrumentDetection::Status;
-                expect (r->instrument.status != IS::NotRun, "instrument recognition ran");
-                logMessage ("instrument: " + eyra::intelligence::describe (r->instrument) + " / " + r->instrument.message);
-                if (juce::SystemStats::getEnvironmentVariable ("EYRA_REQUIRE_INSTRUMENT_RECOGNITION", {}) == "1")
-                {
-                    expect (r->instrument.status != IS::Unavailable, r->instrument.message);
-                    expect (r->instrument.status != IS::Detected, "pink noise is not an instrument");
-                }
             }
             expect (p.analysis.getResultVersion() > 0);
         }

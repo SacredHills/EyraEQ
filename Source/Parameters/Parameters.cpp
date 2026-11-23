@@ -1,80 +1,60 @@
 #include "Parameters.h"
 
-#include <cmath>
-
 namespace eyra::params
 {
 
 namespace
 {
-    const char* fieldSuffix (BandField f)
-    {
-        switch (f)
-        {
-            case BandField::Used:      return "used";
-            case BandField::Bypass:    return "bypass";
-            case BandField::Type:      return "type";
-            case BandField::Frequency: return "freq";
-            case BandField::Gain:      return "gain";
-            case BandField::Q:         return "q";
-            case BandField::Slope:     return "slope";
-            case BandField::Placement: return "place";
-        }
-        return "";
-    }
+    const char* const fieldIds[] { "on", "type", "freq", "gain", "q", "slope", "dyn", "range", "thr", "use", "atk", "rel", "arel" };
+    constexpr float kBandDefaults[dsp::eqBandCount] { 60, 150, 400, 1000, 2500, 5000, 9000, 15000 };
 
-    juce::NormalisableRange<float> logRange (float minValue, float maxValue)
+    juce::String hzText (float v)
     {
-        const float ratio = maxValue / minValue;
-        return { minValue, maxValue,
-                 [=] (float, float, float x) { return minValue * std::pow (ratio, x); },
-                 [=] (float, float, float v) { return std::log (v / minValue) / std::log (ratio); },
-                 [=] (float lo, float hi, float v) { return juce::jlimit (lo, hi, v); } };
-    }
-
-    juce::String formatFrequency (float hz, int)
-    {
-        if (hz >= 1000.0f)
-            return juce::String (hz / 1000.0f, hz >= 10000.0f ? 1 : 2) + " kHz";
-        return (hz < 100.0f ? juce::String (hz, 1) : juce::String (juce::roundToInt (hz))) + " Hz";
-    }
-
-    float parseFrequency (const juce::String& text)
-    {
-        const auto t = text.trim().toLowerCase();
-        const float v = t.getFloatValue();
-        return t.containsChar ('k') ? v * 1000.0f : v;
+        return v >= 1000.0f ? juce::String (v / 1000.0f, 2) + " kHz" : juce::String (juce::roundToInt (v)) + " Hz";
     }
 } // namespace
 
 juce::String bandParamID (int bandIndex, BandField field)
 {
-    return "b" + juce::String (bandIndex + 1) + "_" + fieldSuffix (field);
-}
-
-juce::StringArray filterTypeNames()
-{
-    return { "Bell", "Low Shelf", "High Shelf", "High Pass", "Low Pass", "Notch", "Band Pass", "Tilt" };
-}
-
-juce::StringArray slopeNames()
-{
-    juce::StringArray names;
-    for (auto s : dsp::kSlopesDbPerOct)
-        names.add (juce::String (s) + " dB/oct");
-    return names;
-}
-
-juce::StringArray placementNames()
-{
-    return { "Stereo", "Left", "Right", "Mid", "Side" };
+    return dsp::eqId (bandIndex, fieldIds[(int) field]);
 }
 
 float defaultBandFrequency (int bandIndex)
 {
-    // Spread unused slots logarithmically between 40 Hz and 16 kHz.
-    const float t = (float) bandIndex / (float) (kNumBands - 1);
-    return 40.0f * std::pow (400.0f, t);
+    return kBandDefaults[juce::jlimit (0, dsp::eqBandCount - 1, bandIndex)];
+}
+
+int eqTypeFor (dsp::FilterType t) noexcept
+{
+    using T = dsp::FilterType;
+    switch (t)
+    {
+        case T::Bell:      return dsp::eqBell;
+        case T::LowShelf:  return dsp::eqLowShelf;
+        case T::HighShelf: return dsp::eqHighShelf;
+        case T::HighPass:  return dsp::eqLowCut;
+        case T::LowPass:   return dsp::eqHighCut;
+        case T::Notch:     return dsp::eqNotch;
+        case T::BandPass:  return dsp::eqBandPass;
+        case T::Tilt:      break;
+    }
+    return dsp::eqBell;
+}
+
+dsp::FilterType filterTypeFor (int t) noexcept
+{
+    using T = dsp::FilterType;
+    switch (t)
+    {
+        case dsp::eqLowShelf:  return T::LowShelf;
+        case dsp::eqHighShelf: return T::HighShelf;
+        case dsp::eqLowCut:    return T::HighPass;
+        case dsp::eqHighCut:   return T::LowPass;
+        case dsp::eqNotch:     return T::Notch;
+        case dsp::eqBandPass:  return T::BandPass;
+        default:               break;
+    }
+    return T::Bell;
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -82,93 +62,40 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     using namespace juce;
     AudioProcessorValueTreeState::ParameterLayout layout;
 
-    for (int b = 0; b < kNumBands; ++b)
+    auto floatParam = [&] (const juce::String& pid, const juce::String& name, float lo, float hi, float def, const juce::String& unit,
+                           float centre, std::function<String (float, int)> text)
     {
-        const String prefix = "Band " + String (b + 1) + " ";
-        auto group = std::make_unique<AudioProcessorParameterGroup> ("band" + String (b + 1), "Band " + String (b + 1), " | ");
-
-        group->addChild (std::make_unique<AudioParameterBool> (ParameterID { bandParamID (b, BandField::Used), 1 }, prefix + "Enabled", false));
-        group->addChild (std::make_unique<AudioParameterBool> (ParameterID { bandParamID (b, BandField::Bypass), 1 }, prefix + "Bypass", false));
-        group->addChild (std::make_unique<AudioParameterChoice> (ParameterID { bandParamID (b, BandField::Type), 1 }, prefix + "Type", filterTypeNames(), 0));
-
-        group->addChild (std::make_unique<AudioParameterFloat> (
-            ParameterID { bandParamID (b, BandField::Frequency), 1 }, prefix + "Frequency",
-            logRange ((float) dsp::kMinFrequency, (float) dsp::kMaxFrequency), defaultBandFrequency (b),
-            AudioParameterFloatAttributes().withLabel ("Hz")
-                .withStringFromValueFunction (formatFrequency)
-                .withValueFromStringFunction (parseFrequency)));
-
-        group->addChild (std::make_unique<AudioParameterFloat> (
-            ParameterID { bandParamID (b, BandField::Gain), 1 }, prefix + "Gain",
-            NormalisableRange<float> ((float) -dsp::kMaxGainDb, (float) dsp::kMaxGainDb, 0.01f), 0.0f,
-            AudioParameterFloatAttributes().withLabel ("dB")
-                .withStringFromValueFunction ([] (float v, int) { return String (v, 2) + " dB"; })));
-
-        group->addChild (std::make_unique<AudioParameterFloat> (
-            ParameterID { bandParamID (b, BandField::Q), 1 }, prefix + "Q",
-            logRange ((float) dsp::kMinQ, (float) dsp::kMaxQ), 0.7071f,
-            AudioParameterFloatAttributes()
-                .withStringFromValueFunction ([] (float v, int) { return String (v, v < 1.0f ? 3 : 2); })));
-
-        group->addChild (std::make_unique<AudioParameterChoice> (ParameterID { bandParamID (b, BandField::Slope), 1 }, prefix + "Slope", slopeNames(), dsp::kDefaultSlopeIndex));
-        group->addChild (std::make_unique<AudioParameterChoice> (ParameterID { bandParamID (b, BandField::Placement), 1 }, prefix + "Stereo Placement", placementNames(), 0));
-
-        layout.add (std::move (group));
-    }
-
-    auto gainAttributes = AudioParameterFloatAttributes().withLabel ("dB")
-                              .withStringFromValueFunction ([] (float v, int) { return String (v, 1) + " dB"; });
-
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id::inputGain, 1 }, "Input Gain",
-                                                       NormalisableRange<float> (-24.0f, 24.0f, 0.01f), 0.0f, gainAttributes));
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id::outputGain, 1 }, "Output Gain",
-                                                       NormalisableRange<float> (-24.0f, 24.0f, 0.01f), 0.0f, gainAttributes));
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { id::masterBypass, 1 }, "Bypass", false));
-
-    return layout;
-}
-
-//==============================================================================
-ParameterReader::ParameterReader (juce::AudioProcessorValueTreeState& state)
-{
-    auto get = [&state] (const juce::String& paramID)
-    {
-        auto* p = state.getRawParameterValue (paramID);
-        jassert (p != nullptr);
-        return p;
+        NormalisableRange<float> r (lo, hi);
+        if (centre > lo && centre < hi)
+            r.setSkewForCentre (centre);
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { pid, 1 }, name, r, def,
+                                                           AudioParameterFloatAttributes().withLabel (unit).withStringFromValueFunction (std::move (text))));
     };
+    auto dbText = [] (float v, int) { return String (v, 1) + " dB"; };
+    auto msText = [] (float v, int) { return v >= 1000.0f ? String (v / 1000.0f, 2) + " s" : String (v, v < 10.0f ? 1 : 0) + " ms"; };
 
     for (int b = 0; b < kNumBands; ++b)
     {
-        auto& bp = bands[(size_t) b];
-        bp.used = get (bandParamID (b, BandField::Used));
-        bp.bypass = get (bandParamID (b, BandField::Bypass));
-        bp.type = get (bandParamID (b, BandField::Type));
-        bp.freq = get (bandParamID (b, BandField::Frequency));
-        bp.gain = get (bandParamID (b, BandField::Gain));
-        bp.q = get (bandParamID (b, BandField::Q));
-        bp.slope = get (bandParamID (b, BandField::Slope));
-        bp.placement = get (bandParamID (b, BandField::Placement));
+        const auto name = "Band " + String (b + 1) + " ";
+        auto pid = [b] (BandField f) { return bandParamID (b, f); };
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { pid (BandField::On), 1 }, name + "on", false));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid (BandField::Type), 1 }, name + "type", dsp::eqTypeNames, 0));
+        floatParam (pid (BandField::Frequency), name + "freq", 10.0f, 30000.0f, kBandDefaults[b], "Hz", 1000.0f, [] (float v, int) { return hzText (v); });
+        floatParam (pid (BandField::Gain), name + "gain", -dsp::eqGainRange, dsp::eqGainRange, 0.0f, "dB", 0.0f, dbText);
+        floatParam (pid (BandField::Q), name + "Q", 0.1f, 30.0f, 1.0f, "", 1.5f, [] (float v, int) { return String (v, 2); });
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid (BandField::Slope), 1 }, name + "slope", dsp::eqSlopeNames, 1));
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { pid (BandField::Dynamics), 1 }, name + "dynamics", dsp::eqDynNames, 0));
+        floatParam (pid (BandField::Range), name + "dyn range", -dsp::eqGainRange, dsp::eqGainRange, -6.0f, "dB", 0.0f, dbText);
+        floatParam (pid (BandField::Threshold), name + "threshold", -80.0f, 0.0f, -24.0f, "dB", -24.0f, dbText);
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { pid (BandField::Used), 1 }, name + "in use", false));
+        floatParam (pid (BandField::Attack), name + "attack", 0.5f, 200.0f, 10.0f, "ms", 15.0f, msText);
+        floatParam (pid (BandField::Release), name + "release", 5.0f, 2000.0f, 120.0f, "ms", 150.0f, msText);
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { pid (BandField::AutoRelease), 1 }, name + "auto release", false));
     }
 
-    inputGain = get (id::inputGain);
-    outputGain = get (id::outputGain);
-    bypass = get (id::masterBypass);
-}
-
-dsp::BandParams ParameterReader::readBand (int bandIndex) const noexcept
-{
-    const auto& bp = bands[(size_t) bandIndex];
-    dsp::BandParams p;
-    p.used = bp.used->load() >= 0.5f;
-    p.bypassed = bp.bypass->load() >= 0.5f;
-    p.type = (dsp::FilterType) juce::jlimit (0, dsp::kNumFilterTypes - 1, (int) std::lround (bp.type->load()));
-    p.frequency = bp.freq->load();
-    p.gainDb = bp.gain->load();
-    p.q = bp.q->load();
-    p.slopeIndex = juce::jlimit (0, (int) dsp::kSlopesDbPerOct.size() - 1, (int) std::lround (bp.slope->load()));
-    p.placement = (dsp::StereoPlacement) juce::jlimit (0, dsp::kNumStereoPlacements - 1, (int) std::lround (bp.placement->load()));
-    return p;
+    floatParam (id::outputGain, "Output", -18.0f, 18.0f, 0.0f, "dB", 0.0f, dbText);
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { id::masterBypass, 1 }, "Bypass", false));
+    return layout;
 }
 
 void setParameterValue (juce::AudioProcessorValueTreeState& state, const juce::String& paramID, float realValue)
@@ -183,6 +110,48 @@ void setParameterValue (juce::AudioProcessorValueTreeState& state, const juce::S
             p->endChangeGesture();
         }
     }
+}
+
+namespace
+{
+    float real (juce::AudioProcessorValueTreeState& s, int band, BandField f)
+    {
+        auto* p = s.getParameter (bandParamID (band, f));
+        return p != nullptr ? p->convertFrom0to1 (p->getValue()) : 0.0f;
+    }
+} // namespace
+
+dsp::BandParams readBand (juce::AudioProcessorValueTreeState& state, int b)
+{
+    dsp::BandParams p;
+    p.used = real (state, b, BandField::Used) >= 0.5f;
+    p.bypassed = real (state, b, BandField::On) < 0.5f;
+    p.type = filterTypeFor (juce::roundToInt (real (state, b, BandField::Type)));
+    p.frequency = real (state, b, BandField::Frequency);
+    p.gainDb = real (state, b, BandField::Gain);
+    p.q = real (state, b, BandField::Q);
+    p.slopeIndex = juce::jlimit (0, 7, juce::roundToInt (real (state, b, BandField::Slope)));
+    return p;
+}
+
+void writeBand (juce::AudioProcessorValueTreeState& state, int b, const dsp::BandParams& band)
+{
+    auto set = [&] (BandField f, float v) { setParameterValue (state, bandParamID (b, f), v); };
+    set (BandField::Type, (float) eqTypeFor (band.type));
+    set (BandField::Frequency, (float) band.frequency);
+    set (BandField::Gain, (float) band.gainDb);
+    set (BandField::Q, (float) band.q);
+    set (BandField::Slope, (float) band.slopeIndex);
+    set (BandField::Dynamics, 0.0f);
+    set (BandField::On, band.bypassed ? 0.0f : 1.0f);
+    set (BandField::Used, 1.0f);
+}
+
+void clearBand (juce::AudioProcessorValueTreeState& state, int b)
+{
+    setParameterValue (state, bandParamID (b, BandField::Used), 0.0f);
+    setParameterValue (state, bandParamID (b, BandField::Gain), 0.0f);
+    setParameterValue (state, bandParamID (b, BandField::Dynamics), 0.0f);
 }
 
 } // namespace eyra::params

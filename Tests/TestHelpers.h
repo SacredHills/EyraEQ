@@ -1,5 +1,9 @@
 #pragma once
 
+#include "DSP/BandParams.h"
+#include "DSP/EqCore.h"
+#include "Parameters/Parameters.h"
+
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
 
@@ -46,5 +50,26 @@ inline double rms (const float* data, int n)
 }
 
 inline double toDb (double gain) { return 20.0 * std::log10 (std::max (gain, 1.0e-20)); }
+
+/** A filter to run a test signal through: the same section design the EQ itself uses. */
+struct FilterSpec
+{
+    dsp::FilterType type = dsp::FilterType::Bell;
+    double frequency = 1000.0, gainDb = 0.0, q = 0.7071, slopeIndex = 1;
+};
+
+inline void applyFilter (std::vector<float>& x, const FilterSpec& spec, double sr, int start = 0, int end = -1)
+{
+    dsp::EqBand b;
+    b.type = (float) params::eqTypeFor (spec.type);
+    b.freq = (float) spec.frequency;
+    b.q = (float) spec.q;
+    b.slope = (float) spec.slopeIndex;
+    dsp::EqBandFilter f;
+    f.design (b, sr, (float) spec.gainDb);
+    if (end < 0)
+        end = (int) x.size();
+    f.process (x.data() + start, end - start);
+}
 
 } // namespace eyra::test

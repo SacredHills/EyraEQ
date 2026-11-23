@@ -7,8 +7,8 @@
   ┌──────────────────────────────────────┐     ┌──────────────────────────────────────┐
   │ PluginProcessor::processBlock         │     │ Editor timer (60 Hz)                  │
   │   ParameterReader (atomics) ──┐       │     │   SpectrumAnalyzer::update  (FFT)     │
-  │                               ▼       │     │   SpectrumDisplay::refreshCurves      │
-  │   EQEngine::process ── pre tap ──► AnalyzerFifo (SPSC, lock-free) ──►│              │
+  │                               ▼       │     │   EqGraph::refreshCurves      │
+  │   EqCore::process ── pre tap ──► AnalyzerFifo (SPSC, lock-free) ──►│              │
   │                     └─ post tap ─► AnalyzerFifo ─────────────────────►│              │
   └──────────────────────────────────────┘     │ Parameter edits ─► APVTS ─► host      │
                                                │ EditHistory / ABComparison / Presets  │
@@ -31,33 +31,35 @@
 pre-EQ signal is sent to both the analyser FIFO and a capture FIFO (`TapFanout`); the capture FIFO
 accepts data only while listening. The worker allocates the capture buffer, drains the FIFO, tracks
 progress and runs `analyseAudio()`. Results reach the UI through a lock-protected `shared_ptr`
-polled by the editor timer. After the frequency analysis the same worker runs **instrument
-recognition** (`Intelligence/`): ONNX Runtime is loaded with `dlopen`/`LoadLibrary` from the plug-in
-bundle (never linked), the model is found and validated by `ModelManager`, and one shared
-`InstrumentClassifier` per process runs inference with a single thread. See `AI-Models.md`.
+polled by the editor timer.
+
+**Correction** (Phase 4, `Correction/`) is a pure function, `generateCorrections (result, settings)`,
+that turns findings into suggested `BandParams` using the chosen instrument's profile (`Instrument.cpp`).
+The panel shows the suggestions; `EyraEQAudioProcessor::applyCorrections` writes the approved ones into
+free band slots as one undoable edit and remembers the slots, so applying again replaces them and
+Reset removes only them. See `Correction.md`.
 
 ## Modules
 
 | Folder | Contents | Depends on |
 |---|---|---|
-| `DSP/` | `FilterDesign` (coefficient design), `EQBand` (smoothing, crossfades, biquad cascade), `EQEngine` (signal path, M/S, solo, gains, bypass) | `juce_audio_basics` only |
+| `DSP/` | `Biquad`, `EqCore` (eight bands, Dynamic and Spectral modes, listen, output gain), `BandParams` (the corrective EQ's view of a band), `AudioTap` | `juce_audio_processors`, `juce_dsp` |
 | `Analysis/` | `AnalyzerFifo`, `SpectrumAnalyzer`; `AudioAnalysis` (orchestrator) with `TransientAnalyzer`, `PitchEstimator`, `TonalBalanceAnalyzer`, `ResonanceDetector`, `SpectralTools`; `AnalysisController` (capture + worker) | `juce_dsp`, `juce_audio_formats` |
-| `Parameters/` | parameter layout, IDs, `ParameterReader` | `juce_audio_processors` |
+| `Parameters/` | parameter layout, IDs, `readBand` / `writeBand` | `juce_audio_processors` |
 | `State/` | `EditHistory`, `ABComparison`, `PresetManager` | `juce_audio_processors` |
-| `Intelligence/` | `OnnxRuntime` (run-time loader, session wrapper), `FeatureExtractor` (YAMNet front end), `ModelManager` (discovery, checksums, updates), `InstrumentClassifier` (taxonomy, decision, refinements, self-test) | ONNX Runtime C API (headers only), `juce_cryptography` |
-| `UI/` | look and feel, `SpectrumDisplay`, `BandControlPanel`, `TopBar`, `AnalysisPanel`, `EditorContext` | `juce_gui_basics` |
+| `Correction/` | `Instrument` (choices and profiles: character regions, safe high-pass, Polished enhancements), `CorrectionGenerator` (findings + settings -> suggested bands) | `Analysis/`, `DSP/` types |
+| `UI/` | look and feel, `EqGraph`, `EqBandPanel`, `TopBar`, `AnalysisPanel`, `EditorContext` | `juce_gui_basics` |
 
 The DSP layer has no GUI or plug-in dependencies and is tested on its own.
 
 ## Parameters
 
-Every band has eight host-automatable parameters (`b{n}_used`, `_bypass`, `_type`, `_freq`,
-`_gain`, `_q`, `_slope`, `_place`). Global parameters: `input_gain`, `output_gain`, `bypass`. IDs
-carry version hint 1. The number of bands is `EQEngine::kMaxBands`; increasing it adds parameters
-without any DSP change. Changing it breaks session compatibility for automation lanes, so it should
-be settled before the first public release.
+Every band has thirteen host-automatable parameters (`b{n}on`, `type`, `freq`, `gain`, `q`, `slope`,
+`dyn`, `range`, `thr`, `use`, `atk`, `rel`, `arel`; `use` means the band exists, `on` that it is not
+bypassed). Global parameters: `out` (output gain) and `bypass`. The EQ and its parameter ids come from the
+Ravenyr DAW's built-in EQ. Eight bands; changing that breaks session compatibility.
 
-Solo is not a parameter: it is a monitoring aid and is neither saved nor automated.
+Listen is not a parameter: it is a monitoring aid and is neither saved nor automated.
 
 ## Saved state
 
@@ -85,14 +87,12 @@ inside a `ScopedSuspend`. Master bypass is excluded from undo and A/B.
 - **Analogue-matched filters** rather than plain bilinear (RBJ) biquads, so curves keep their shape
   near Nyquist without needing oversampling, which keeps the EQ zero-latency and transparent. See `DSP.md`.
 - **Double precision** for coefficients, filter state and the whole internal signal path.
-- **Series topology with per-band stereo placement**: each band switches between the L/R and M/S
-  domains only when needed. The conversion is exact, so mixing placements costs nothing in quality.
+- **Series topology**: the bands run in series on L/R; Spectral bands share one STFT stage.
 - **No intelligent UI until it works**: the specification forbids fake controls and simulated
-  results, so the analysis panel arrived only with working analysis (Phase 2), and there is no
-  instrument display until recognition works (Phase 3).
-- **ONNX Runtime is loaded at run time, not linked**, so a missing or incompatible runtime cannot
-  stop the plug-in from loading; it only disables recognition.
-- **Model logic lives in data** (`instrument_taxonomy.json`, model manifest), shared by the plug-in and
-  the validation scripts, so a recalibrated taxonomy or a new model is an update, not a code change.
+  results, so the analysis panel arrived only with working analysis (Phase 2).
+- **The user chooses the instrument.** Automatic recognition was built (Phase 3) but was not reliable
+  enough on real tracks and was removed; the plug-in is a single self-contained binary.
+- **Corrections are ordinary bands**, never a hidden processing stage, so everything the correction
+  does is visible, editable and saved like any other setting.
 - **Analysis is a pure function** (`analyseAudio(samples, rate)`), so it can be tested on synthetic
   signals with known answers and reused for file analysis.

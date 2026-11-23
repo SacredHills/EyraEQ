@@ -112,8 +112,8 @@ public:
 
         auto* gain = p.apvts.getParameter (bandParamID (1, BandField::Gain));
         auto* type = p.apvts.getParameter (bandParamID (2, BandField::Type));
-        auto* used = p.apvts.getParameter (bandParamID (10, BandField::Used));
-        auto* place = p.apvts.getParameter (bandParamID (1, BandField::Placement));
+        auto* used = p.apvts.getParameter (bandParamID (3, BandField::Used));
+        auto* dyn = p.apvts.getParameter (bandParamID (1, BandField::Dynamics));
 
         // Listening for analysis must not change the audio thread's behaviour either.
         p.analysis.startListening();
@@ -131,8 +131,8 @@ public:
             if (blk % 53 == 0)
                 used->setValueNotifyingHost (used->getValue() > 0.5f ? 0.0f : 1.0f);
             if (blk % 71 == 0)
-                place->setValueNotifyingHost (place->getValue() > 0.5f ? 0.0f : 1.0f);
-            p.soloBand = (blk / 100) % 2 == 1 ? 1 : -1;
+                dyn->setValueNotifyingHost (dyn->getValue() > 0.5f ? 0.0f : 1.0f);
+            p.getEq().listenBand.store ((blk / 100) % 2 == 1 ? 1 : -1);
 
             eyra::test::fillSine (buf, 220.0, 48000.0, 0.3f, phase);
 

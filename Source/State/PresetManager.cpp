@@ -10,7 +10,6 @@ namespace eyra::state
 namespace
 {
     const char* const typeTokens[] = { "Bell", "LowShelf", "HighShelf", "HighPass", "LowPass", "Notch", "BandPass", "Tilt" };
-    const char* const placementTokens[] = { "Stereo", "Left", "Right", "Mid", "Side" };
 
     int tokenIndex (const juce::String& token, const char* const* tokens, int count, int fallback)
     {
@@ -97,7 +96,6 @@ std::unique_ptr<juce::XmlElement> PresetManager::createPresetXml (const juce::St
     auto xml = std::make_unique<juce::XmlElement> ("EyraEQPreset");
     xml->setAttribute ("name", name);
     xml->setAttribute ("version", 1);
-    xml->setAttribute ("inputGain", realValue (state, params::id::inputGain));
     xml->setAttribute ("outputGain", realValue (state, params::id::outputGain));
 
     for (int b = 0; b < params::kNumBands; ++b)
@@ -106,14 +104,23 @@ std::unique_ptr<juce::XmlElement> PresetManager::createPresetXml (const juce::St
             continue;
 
         auto* band = xml->createNewChildElement ("Band");
+        auto value = [&] (BandField f) { return realValue (state, bandParamID (b, f)); };
         band->setAttribute ("index", b + 1);
-        band->setAttribute ("type", typeTokens[juce::jlimit (0, 7, (int) realValue (state, bandParamID (b, BandField::Type)))]);
-        band->setAttribute ("freq", realValue (state, bandParamID (b, BandField::Frequency)));
-        band->setAttribute ("gain", realValue (state, bandParamID (b, BandField::Gain)));
-        band->setAttribute ("q", realValue (state, bandParamID (b, BandField::Q)));
-        band->setAttribute ("slope", dsp::kSlopesDbPerOct[(size_t) juce::jlimit (0, 7, (int) realValue (state, bandParamID (b, BandField::Slope)))]);
-        band->setAttribute ("placement", placementTokens[juce::jlimit (0, 4, (int) realValue (state, bandParamID (b, BandField::Placement)))]);
-        band->setAttribute ("bypass", realValue (state, bandParamID (b, BandField::Bypass)) >= 0.5f ? 1 : 0);
+        band->setAttribute ("type", typeTokens[(int) params::filterTypeFor (juce::roundToInt (value (BandField::Type)))]);
+        band->setAttribute ("freq", value (BandField::Frequency));
+        band->setAttribute ("gain", value (BandField::Gain));
+        band->setAttribute ("q", value (BandField::Q));
+        band->setAttribute ("slope", dsp::kSlopesDbPerOct[(size_t) juce::jlimit (0, 7, juce::roundToInt (value (BandField::Slope)))]);
+        band->setAttribute ("bypass", value (BandField::On) >= 0.5f ? 0 : 1);
+        if (const int dyn = juce::roundToInt (value (BandField::Dynamics)); dyn != 0)
+        {
+            band->setAttribute ("dynamics", dyn);
+            band->setAttribute ("range", value (BandField::Range));
+            band->setAttribute ("threshold", value (BandField::Threshold));
+            band->setAttribute ("attack", value (BandField::Attack));
+            band->setAttribute ("release", value (BandField::Release));
+            band->setAttribute ("autoRelease", value (BandField::AutoRelease) >= 0.5f ? 1 : 0);
+        }
     }
 
     return xml;
@@ -127,17 +134,13 @@ bool PresetManager::applyPresetXml (const juce::XmlElement& xml)
     if (! xml.hasTagName ("EyraEQPreset"))
         return false;
 
-    // Gather target values first: every band defaults to disabled.
+    // Gather target values first: every band defaults to not existing.
     std::map<juce::String, float> values;
 
     for (int b = 0; b < params::kNumBands; ++b)
-    {
-        for (auto f : { BandField::Used, BandField::Bypass, BandField::Type, BandField::Frequency,
-                        BandField::Gain, BandField::Q, BandField::Slope, BandField::Placement })
-            values[bandParamID (b, f)] = defaultRealValue (state, bandParamID (b, f));
-    }
+        for (int f = 0; f <= (int) BandField::AutoRelease; ++f)
+            values[bandParamID (b, (BandField) f)] = defaultRealValue (state, bandParamID (b, (BandField) f));
 
-    values[params::id::inputGain] = (float) xml.getDoubleAttribute ("inputGain", 0.0);
     values[params::id::outputGain] = (float) xml.getDoubleAttribute ("outputGain", 0.0);
 
     for (auto* band : xml.getChildWithTagNameIterator ("Band"))
@@ -146,14 +149,23 @@ bool PresetManager::applyPresetXml (const juce::XmlElement& xml)
         if (b < 0 || b >= params::kNumBands)
             continue;
 
-        values[bandParamID (b, BandField::Used)] = 1.0f;
-        values[bandParamID (b, BandField::Bypass)] = band->getBoolAttribute ("bypass", false) ? 1.0f : 0.0f;
-        values[bandParamID (b, BandField::Type)] = (float) tokenIndex (band->getStringAttribute ("type"), typeTokens, 8, 0);
-        values[bandParamID (b, BandField::Frequency)] = (float) band->getDoubleAttribute ("freq", 1000.0);
-        values[bandParamID (b, BandField::Gain)] = (float) band->getDoubleAttribute ("gain", 0.0);
-        values[bandParamID (b, BandField::Q)] = (float) band->getDoubleAttribute ("q", 0.7071);
-        values[bandParamID (b, BandField::Slope)] = (float) slopeIndexFromDb (band->getIntAttribute ("slope", 12));
-        values[bandParamID (b, BandField::Placement)] = (float) tokenIndex (band->getStringAttribute ("placement"), placementTokens, 5, 0);
+        auto set = [&] (BandField f, float v) { values[bandParamID (b, f)] = v; };
+        set (BandField::Used, 1.0f);
+        set (BandField::On, band->getBoolAttribute ("bypass", false) ? 0.0f : 1.0f);
+        set (BandField::Type, (float) params::eqTypeFor ((dsp::FilterType) tokenIndex (band->getStringAttribute ("type"), typeTokens, 8, 0)));
+        set (BandField::Frequency, (float) band->getDoubleAttribute ("freq", 1000.0));
+        set (BandField::Gain, (float) band->getDoubleAttribute ("gain", 0.0));
+        set (BandField::Q, (float) band->getDoubleAttribute ("q", 0.7071));
+        set (BandField::Slope, (float) slopeIndexFromDb (band->getIntAttribute ("slope", 12)));
+        if (band->hasAttribute ("dynamics"))
+        {
+            set (BandField::Dynamics, (float) band->getIntAttribute ("dynamics", 0));
+            set (BandField::Range, (float) band->getDoubleAttribute ("range", -6.0));
+            set (BandField::Threshold, (float) band->getDoubleAttribute ("threshold", -24.0));
+            set (BandField::Attack, (float) band->getDoubleAttribute ("attack", 10.0));
+            set (BandField::Release, (float) band->getDoubleAttribute ("release", 120.0));
+            set (BandField::AutoRelease, band->getBoolAttribute ("autoRelease", false) ? 1.0f : 0.0f);
+        }
     }
 
     history.beginEdit();

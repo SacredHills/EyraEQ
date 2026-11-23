@@ -82,17 +82,14 @@ int main (int argc, char* argv[])
     fm.addFormat (std::make_unique<juce::VST3PluginFormat>());
     auto* vst3 = fm.getFormat (0);
 
-    // --- Bundle contents: instrument recognition runtime and model ---------------------------
+    // --- Bundle contents: a single self-contained plug-in, no extra libraries or model files ---
     {
         const auto contents = bundle.getChildFile ("Contents");
-        const auto resources = contents.getChildFile ("Resources").getChildFile ("Models");
-        check (resources.getChildFile ("yamnet").getChildFile ("manifest.json").existsAsFile(), "bundle contains the instrument model");
-        check (resources.getChildFile ("yamnet").getChildFile ("yamnet.onnx").existsAsFile(), "bundle contains yamnet.onnx");
-        check (resources.getChildFile ("instrument_taxonomy.json").existsAsFile(), "bundle contains the instrument taxonomy");
-        bool runtimeFound = false;
+        bool extraLibrary = false;
         for (const auto& f : contents.findChildFiles (juce::File::findFiles, true, "*onnxruntime*"))
-            runtimeFound |= f.getFileName().containsIgnoreCase ("onnxruntime") && ! f.getFileName().endsWith (".h");
-        check (runtimeFound, "bundle contains the ONNX Runtime library");
+            extraLibrary = extraLibrary || f.existsAsFile();
+        check (! extraLibrary, "bundle needs no ONNX Runtime library");
+        check (! contents.getChildFile ("Resources").getChildFile ("Models").exists(), "bundle needs no model files");
     }
 
     // --- Scan ------------------------------------------------------------------------------
@@ -123,15 +120,16 @@ int main (int argc, char* argv[])
     stereo.outputBuses.add (juce::AudioChannelSet::stereo());
     check (p->checkBusesLayoutSupported (stereo), "stereo layout supported");
     check (p->checkBusesLayoutSupported (mono), "mono layout supported");
-    check (p->getLatencySamples() == 0, "reports zero latency");
-    check (p->getParameters().size() >= 195, "exposes all parameters (" + juce::String (p->getParameters().size()) + ")");
+    check (p->getLatencySamples() == 0, "reports zero latency (no spectral band)");
+    check (p->getParameters().size() >= 106, "exposes all parameters (" + juce::String (p->getParameters().size()) + ")");
 
     // --- Parameters drive the DSP ----------------------------------------------------------
-    auto* used = findParam (*p, "Band 1 Enabled");
-    auto* freq = findParam (*p, "Band 1 Frequency");
-    auto* gain = findParam (*p, "Band 1 Gain");
-    check (used != nullptr && freq != nullptr && gain != nullptr, "band parameters visible to host");
-    if (used == nullptr || freq == nullptr || gain == nullptr)
+    auto* used = findParam (*p, "Band 1 in use");
+    auto* on = findParam (*p, "Band 1 on");
+    auto* freq = findParam (*p, "Band 1 freq");
+    auto* gain = findParam (*p, "Band 1 gain");
+    check (on != nullptr && used != nullptr && freq != nullptr && gain != nullptr, "band parameters visible to host");
+    if (on == nullptr || used == nullptr || freq == nullptr || gain == nullptr)
         return 1;
 
     for (int channels : { 2, 1 })
@@ -143,6 +141,7 @@ int main (int argc, char* argv[])
                 p->prepareToPlay (sr, block);
 
                 used->setValue (1.0f);
+                on->setValue (1.0f);
                 freq->setValue (freq->getValueForText ("1000"));
                 gain->setValue (gain->getValueForText ("-9"));
                 const double g = measureGainDb (*p, sr, block, channels, 1000.0);
@@ -162,8 +161,8 @@ int main (int argc, char* argv[])
     if (q != nullptr)
     {
         q->setStateInformation (state.getData(), (int) state.getSize());
-        auto* qGain = findParam (*q, "Band 1 Gain");
-        auto* qUsed = findParam (*q, "Band 1 Enabled");
+        auto* qGain = findParam (*q, "Band 1 gain");
+        auto* qUsed = findParam (*q, "Band 1 in use");
         check (qGain != nullptr && std::abs (qGain->getValue() - gain->getValue()) < 1.0e-5f, "state restores parameter values in a new instance");
         check (qUsed != nullptr && qUsed->getValue() > 0.5f, "state restores band enabled");
         q->releaseResources();

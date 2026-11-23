@@ -1,9 +1,8 @@
 # Audio analysis (Phase 2)
 
-EyraEQ can listen to the track it is inserted on and report frequency problems. Phase 2 *detects
-and explains* problems. It does not change any EQ setting; generating corrective bands is Phase 4.
-Instrument recognition (Phase 3) is not available yet, so all findings are based on the audio alone,
-and the panel says so.
+EyraEQ can listen to the track it is inserted on and report frequency problems. The findings are
+based on the audio alone; turning them into EQ bands, using the instrument the user chose, is
+described in [Correction.md](Correction.md).
 
 ## Workflow
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "DSP/EQEngine.h"
+#include "DSP/AudioTap.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>

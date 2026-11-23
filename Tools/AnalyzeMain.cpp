@@ -1,14 +1,13 @@
-// EyraEQAnalyze: runs the plug-in's real analysis and instrument recognition on audio files.
+// EyraEQAnalyze: runs the plug-in's real analysis and correction logic on audio files.
 //
-//   EyraEQAnalyze [--json] file.wav [more files...]
+//   EyraEQAnalyze [--instrument "Snare drum"] [--strength Gentle|Moderate|Aggressive] [--polished] [--auto-highpass] file.wav ...
 //
-// The output is what the plug-in's analysis panel would show for the same audio, plus the measurements
-// the decision used. Used to check recognition on real recordings (see Documentation/AI-Models.md).
-// Needs ONNX Runtime and the model: set EYRA_ONNXRUNTIME_LIBRARY and EYRA_MODEL_DIR, or run it from a
-// folder that contains onnxruntime and Models/ (the build copies them next to the executable).
+// Prints what the plug-in's analysis panel would show: the findings and the proposed EQ bands.
 
 #include "Analysis/AudioAnalysis.h"
-#include "Intelligence/InstrumentClassifier.h"
+#include "Correction/CorrectionGenerator.h"
+#include "PluginEditor.h"
+#include "PluginProcessor.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_events/juce_events.h>
@@ -19,27 +18,6 @@ using namespace eyra;
 
 namespace
 {
-const char* statusName (intelligence::InstrumentDetection::Status s)
-{
-    using S = intelligence::InstrumentDetection::Status;
-    switch (s)
-    {
-        case S::NotRun:        return "not run";
-        case S::Unavailable:   return "unavailable";
-        case S::NeedMoreAudio: return "need more audio";
-        case S::Unknown:       return "unknown";
-        case S::Ambiguous:     return "ambiguous";
-        case S::Detected:      return "detected";
-    }
-    return "?";
-}
-
-const char* confidenceName (intelligence::InstrumentDetection::Confidence c)
-{
-    using C = intelligence::InstrumentDetection::Confidence;
-    return c == C::High ? "high" : c == C::Medium ? "medium" : "low";
-}
-
 bool loadMono (const juce::File& file, std::vector<float>& mono, double& rate)
 {
     juce::AudioFormatManager formats;
@@ -61,29 +39,40 @@ bool loadMono (const juce::File& file, std::vector<float>& mono, double& rate)
 
 int main (int argc, char* argv[])
 {
-    juce::ScopedJuceInitialiser_GUI juceInit; // (juce_events)
-    bool json = false;
+    juce::ScopedJuceInitialiser_GUI juceInit;
+    correction::Settings settings;
     juce::StringArray files;
+    juce::File screenshot;
+    bool applyInScreenshot = false;
     for (int i = 1; i < argc; ++i)
     {
         const juce::String arg (argv[i]);
-        if (arg == "--json")
-            json = true;
+        if (arg == "--instrument" && i + 1 < argc)
+        {
+            const juce::String name (argv[++i]);
+            for (int k = 0; k < (int) correction::Instrument::NumInstruments; ++k)
+                if (correction::instrumentName ((correction::Instrument) k).equalsIgnoreCase (name))
+                    settings.instrument = (correction::Instrument) k;
+        }
+        else if (arg == "--strength" && i + 1 < argc)
+            settings.strength = (correction::Strength) juce::jmax (0, correction::strengthNames().indexOf (juce::String (argv[++i]), true));
+        else if (arg == "--polished")
+            settings.mode = correction::Mode::Polished;
+        else if (arg == "--auto-highpass")
+            settings.autoHighPass = true;
+        else if (arg == "--screenshot" && i + 1 < argc)
+            screenshot = juce::File::getCurrentWorkingDirectory().getChildFile (argv[++i]);
+        else if (arg == "--apply")
+            applyInScreenshot = true;
         else
             files.add (arg);
     }
     if (files.isEmpty())
     {
-        std::cerr << "usage: EyraEQAnalyze [--json] file.wav [more files...]\n";
+        std::cerr << "usage: EyraEQAnalyze [--instrument NAME] [--strength Gentle|Moderate|Aggressive] [--polished] [--auto-highpass] file.wav ...\n";
         return 2;
     }
 
-    auto classifier = intelligence::InstrumentClassifier::getShared();
-    const bool ready = classifier->ensureInitialised();
-    if (! ready)
-        std::cerr << "instrument recognition unavailable: " << classifier->getStatus() << "\n";
-
-    juce::Array<juce::var> results;
     int failures = 0;
     for (const auto& path : files)
     {
@@ -97,56 +86,38 @@ int main (int argc, char* argv[])
             continue;
         }
 
-        auto r = analysis::analyseAudio (mono.data(), (int) mono.size(), rate);
-        if (ready && r.status != analysis::AnalysisResult::Status::Silent)
-            r.instrument = classifier->classify (mono.data(), (int) mono.size(), rate, r);
-
-        const auto& d = r.instrument;
-        auto* obj = new juce::DynamicObject();
-        obj->setProperty ("file", file.getFileName());
-        obj->setProperty ("status", statusName (d.status));
-        obj->setProperty ("instrument", intelligence::instrumentName (d.instrument()));
-        obj->setProperty ("confidence", confidenceName (d.confidence));
-        obj->setProperty ("summary", intelligence::describe (d));
-        juce::Array<juce::var> cands, labels;
-        for (const auto& c : d.candidates)
-        {
-            auto* co = new juce::DynamicObject();
-            co->setProperty ("instrument", intelligence::instrumentName (c.instrument));
-            co->setProperty ("score", c.score);
-            co->setProperty ("note", c.note);
-            cands.add (juce::var (co));
-        }
-        juce::StringArray heard;
-        for (const auto& [name, score] : d.topLabels)
-        {
-            labels.add (name);
-            heard.add (name + " " + juce::String (score, 2));
-        }
-        obj->setProperty ("candidates", cands);
-        obj->setProperty ("topLabels", labels);
-        obj->setProperty ("lowShare", r.lowShare);
-        obj->setProperty ("lowMidShare", r.lowMidShare);
-        obj->setProperty ("midShare", r.midShare);
-        obj->setProperty ("highShare", r.highShare);
-        obj->setProperty ("centroidHz", r.spectralCentroidHz);
-        obj->setProperty ("flatness", r.spectralFlatness);
-        obj->setProperty ("decaySeconds", r.medianDecaySeconds);
-        results.add (juce::var (obj));
-
-        if (! json)
-        {
-            std::cout << file.getFileName() << ": " << intelligence::describe (d) << "\n"
-                      << "    measured: " << juce::roundToInt (100 * r.lowShare) << "% <150 Hz, "
-                      << juce::roundToInt (100 * r.highShare) << "% >5 kHz, centroid " << juce::roundToInt (r.spectralCentroidHz)
-                      << " Hz, noisiness " << juce::String (r.spectralFlatness, 2) << ", decay "
-                      << juce::roundToInt (1000 * r.medianDecaySeconds) << " ms\n";
-            if (! heard.isEmpty())
-                std::cout << "    model hears: " << heard.joinIntoString (", ") << "\n";
-        }
+        const auto r = analysis::analyseAudio (mono.data(), (int) mono.size(), rate);
+        std::cout << file.getFileName() << " (" << correction::instrumentName (settings.instrument) << "): " << r.message << "\n";
+        for (const auto& f : r.findings)
+            std::cout << "  finding: " << f.title << " (severity " << juce::String (f.severity, 2) << ")\n";
+        for (const auto& s : correction::generateCorrections (r, settings))
+            std::cout << "  " << (s.band ? "EQ  " : "--  ") << s.title << "  [" << s.reason << "]\n";
     }
 
-    if (json)
-        std::cout << juce::JSON::toString (juce::var (results)) << "\n";
+    // Developer aid: the plug-in's editor after analysing the first file, as an image.
+    if (screenshot != juce::File() && ! files.isEmpty())
+    {
+        EyraEQAudioProcessor processor;
+        processor.setCorrectionSettings (settings);
+        processor.analysis.analyseFile (juce::File::getCurrentWorkingDirectory().getChildFile (files[0]));
+        processor.analysis.waitUntilFinished (60000);
+        if (applyInScreenshot)
+        {
+            std::vector<dsp::BandParams> bands;
+            for (const auto& s : processor.getSuggestions())
+                if (s.band)
+                    bands.push_back (*s.band);
+            processor.applyCorrections (bands);
+        }
+        std::unique_ptr<EyraEQAudioProcessorEditor> editor (dynamic_cast<EyraEQAudioProcessorEditor*> (processor.createEditor()));
+        editor->setSize (1240, 760);
+        editor->refreshNow();
+        juce::PNGImageFormat png;
+        juce::FileOutputStream out (screenshot);
+        out.setPosition (0);
+        out.truncate();
+        png.writeImageToStream (editor->createComponentSnapshot (editor->getLocalBounds()), out);
+        std::cout << "screenshot: " << screenshot.getFullPathName() << "\n";
+    }
     return failures == 0 ? 0 : 1;
 }
